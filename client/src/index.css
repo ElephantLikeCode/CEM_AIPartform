@@ -1,0 +1,92 @@
+body {
+  margin: 0;
+  padding: 0; /* 确保没有内边距 */
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-size: 15px; /* 增加全局基础字体大小 */
+}
+
+code {
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
+    monospace;
+}
+
+#root {
+  margin: 0;
+  padding: 0;
+  min-height: 100vh; /* 确保根元素填满视口 */
+}
+
+/* 确保欢迎页面全屏显示 */
+html, body {
+  height: 100%;
+  overflow-x: hidden; /* 防止水平滚动 */
+}
+
+/* 全局字体大小调整 */
+.ant-typography {
+  font-size: 15px !important;
+}
+
+.ant-card-head-title {
+  font-size: 18px !important; /* 调整回合适大小 */
+  font-weight: 600 !important;
+}
+
+.ant-btn {
+  font-size: 15px !important;
+}
+
+.ant-input, .ant-select-selector {
+  font-size: 15px !important;
+}
+
+.ant-table {
+  font-size: 14px !important;
+}
+
+.ant-descriptions-item-label,
+.ant-descriptions-item-content {
+  font-size: 15px !important;
+}
+
+.ant-list-item {
+  font-size: 15px !important;
+}
+
+.ant-modal-title {
+  font-size: 18px !important; /* 调整回合适大小 */
+}
+
+.ant-steps-item-title {
+  font-size: 16px !important; /* 增加步骤标题字体 */
+}
+
+.ant-progress-text {
+  font-size: 14px !important;
+}
+
+/* 增加页面主标题字体大小 */
+h1.ant-typography {
+  font-size: 24px !important; /* 调整回合适大小 */
+}
+
+h2.ant-typography {
+  font-size: 20px !important; /* 调整回合适大小 */
+}
+
+h3.ant-typography {
+  font-size: 18px !important; /* 调整回合适大小 */
+}
+
+h4.ant-typography {
+  font-size: 16px !important; /* 调整回合适大小 */
+}
+
+/* 保持欢迎页面标题大小不变 */
+.welcome-page h1.ant-typography {
+  font-size: 38px !important; /* 保持欢迎页面的大标题 */
+}

@@ -1,0 +1,277 @@
+// /**
+//  * 数据库迁移脚本 - 多用户并发隔离支持
+//  * 文件: server/database/migrate_concurrent_isolation.js
+//  */
+
+// const fs = require('fs');
+// const path = require('path');
+// const Database = require('better-sqlite3');
+
+// class ConcurrentIsolationMigration {
+//   constructor() {
+//     const dbPath = path.join(__dirname, 'knowledge_platform.db');
+//     this.db = new Database(dbPath);
+//     this.db.pragma('journal_mode = WAL');
+//     this.db.pragma('foreign_keys = ON');
+//   }
+
+//   async migrate() {
+//     console.log('🔄 开始多用户并发隔离数据库迁移...');
+    
+//     try {
+//       // 开始事务
+//       const transaction = this.db.transaction(() => {
+//         // 读取并执行迁移SQL
+//         const schemaPath = path.join(__dirname, 'concurrent_isolation_schema.sql');
+//         const schemaSql = fs.readFileSync(schemaPath, 'utf8');
+        
+//         // 分割SQL语句并执行
+//         const statements = schemaSql
+//           .split(';')
+//           .map(stmt => stmt.trim())
+//           .filter(stmt => stmt.length > 0);
+        
+//         for (const statement of statements) {
+//           try {
+//             this.db.exec(statement);
+//             console.log(`✅ 执行成功: ${statement.substring(0, 50)}...`);
+//           } catch (error) {
+//             if (error.message.includes('already exists')) {
+//               console.log(`⚠️ 已存在: ${statement.substring(0, 50)}...`);
+//             } else {
+//               throw error;
+//             }
+//           }
+//         }
+        
+//         // 初始化默认数据
+//         this.initializeDefaultData();
+//       });
+      
+//       transaction();
+      
+//       console.log('✅ 数据库迁移完成！');
+      
+//       // 验证迁移结果
+//       this.validateMigration();
+      
+//     } catch (error) {
+//       console.error('❌ 数据库迁移失败:', error);
+//       throw error;
+//     } finally {
+//       this.db.close();
+//     }
+//   }
+
+//   initializeDefaultData() {
+//     console.log('📝 初始化默认数据...');
+    
+//     try {
+//       // 检查是否已有AI设置记录
+//       const existingSettings = this.db.prepare('SELECT COUNT(*) as count FROM ai_model_settings').get();
+      
+//       if (existingSettings.count === 0) {
+//         // 插入默认AI设置
+//         this.db.prepare(`
+//           INSERT INTO ai_model_settings (
+//             version, model_type, model_name, api_endpoint, 
+//             model_config, is_active, created_by, reason
+//           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+//         `).run(
+//           1,
+//           'deepseek',
+//           'deepseek-chat',
+//           'https://api.deepseek.com',
+//           JSON.stringify({
+//             temperature: 0.7,
+//             max_tokens: 2000,
+//             top_p: 0.9
+//           }),
+//           1,
+//           1, // 假设管理员用户ID为1
+//           '系统初始化默认设置'
+//         );
+        
+//         console.log('✅ 默认AI设置已创建');
+//       }
+      
+//       // 检查并创建索引
+//       this.createOptimizationIndexes();
+      
+//     } catch (error) {
+//       console.error('❌ 初始化默认数据失败:', error);
+//       throw error;
+//     }
+//   }
+
+//   createOptimizationIndexes() {
+//     console.log('🔧 创建性能优化索引...');
+    
+//     const indexes = [
+//       'CREATE INDEX IF NOT EXISTS idx_user_sessions_active ON user_sessions(user_id, expires_at)',
+//       'CREATE INDEX IF NOT EXISTS idx_file_refs_active ON file_references(file_id, reference_type)',
+//       'CREATE INDEX IF NOT EXISTS idx_learning_progress ON learning_session_details(user_id, tag_id, updated_at)',
+//       'CREATE INDEX IF NOT EXISTS idx_quiz_progress ON quiz_session_details(user_id, tag_id, completed_at)',
+//       'CREATE INDEX IF NOT EXISTS idx_audit_recent ON audit_logs(timestamp DESC)',
+//       'CREATE INDEX IF NOT EXISTS idx_notifications_unread ON system_notifications(target_type, target_id, created_at)'
+//     ];
+    
+//     for (const index of indexes) {
+//       try {
+//         this.db.exec(index);
+//         console.log(`✅ 索引创建成功: ${index.match(/idx_\w+/)[0]}`);
+//       } catch (error) {
+//         if (!error.message.includes('already exists')) {
+//           console.warn(`⚠️ 索引创建失败: ${error.message}`);
+//         }
+//       }
+//     }
+//   }
+
+//   validateMigration() {
+//     console.log('🔍 验证迁移结果...');
+    
+//     const expectedTables = [
+//       'user_sessions',
+//       'ai_model_settings',
+//       'ai_settings_history',
+//       'file_references',
+//       'file_locks',
+//       'learning_session_details',
+//       'quiz_session_details',
+//       'concurrency_controls',
+//       'system_notifications',
+//       'audit_logs'
+//     ];
+    
+//     const tables = this.db.prepare(`
+//       SELECT name FROM sqlite_master 
+//       WHERE type='table' AND name NOT LIKE 'sqlite_%'
+//     `).all().map(row => row.name);
+    
+//     for (const table of expectedTables) {
+//       if (tables.includes(table)) {
+//         const count = this.db.prepare(`SELECT COUNT(*) as count FROM ${table}`).get();
+//         console.log(`✅ 表 ${table} 存在，包含 ${count.count} 条记录`);
+//       } else {
+//         console.error(`❌ 表 ${table} 不存在`);
+//       }
+//     }
+    
+//     // 检查AI设置
+//     const aiSettings = this.db.prepare('SELECT version, model_type, is_active FROM ai_model_settings WHERE is_active = 1').get();
+//     if (aiSettings) {
+//       console.log(`✅ 活跃AI设置: 版本 ${aiSettings.version}, 模型 ${aiSettings.model_type}`);
+//     } else {
+//       console.error('❌ 没有找到活跃的AI设置');
+//     }
+//   }
+// }
+
+// // 创建管理接口
+// const migrationManager = {
+//   async runMigration() {
+//     const migration = new ConcurrentIsolationMigration();
+//     await migration.migrate();
+//   },
+
+//   async rollback() {
+//     console.log('🔄 执行回滚操作...');
+//     const dbPath = path.join(__dirname, 'knowledge_platform.db');
+//     const db = new Database(dbPath);
+    
+//     try {
+//       const transaction = db.transaction(() => {
+//         const tablesToDrop = [
+//           'audit_logs',
+//           'system_notifications',
+//           'concurrency_controls',
+//           'quiz_session_details',
+//           'learning_session_details',
+//           'file_locks',
+//           'file_references',
+//           'ai_settings_history',
+//           'ai_model_settings',
+//           'user_sessions'
+//         ];
+        
+//         for (const table of tablesToDrop) {
+//           try {
+//             db.exec(`DROP TABLE IF EXISTS ${table}`);
+//             console.log(`✅ 删除表: ${table}`);
+//           } catch (error) {
+//             console.warn(`⚠️ 删除表失败: ${table} - ${error.message}`);
+//           }
+//         }
+//       });
+      
+//       transaction();
+//       console.log('✅ 回滚完成');
+      
+//     } catch (error) {
+//       console.error('❌ 回滚失败:', error);
+//       throw error;
+//     } finally {
+//       db.close();
+//     }
+//   },
+
+//   async checkStatus() {
+//     console.log('🔍 检查数据库状态...');
+//     const dbPath = path.join(__dirname, 'knowledge_platform.db');
+//     const db = new Database(dbPath);
+    
+//     try {
+//       const tables = db.prepare(`
+//         SELECT name FROM sqlite_master 
+//         WHERE type='table' AND name NOT LIKE 'sqlite_%'
+//         ORDER BY name
+//       `).all();
+      
+//       console.log('📋 数据库表列表:');
+//       for (const table of tables) {
+//         const count = db.prepare(`SELECT COUNT(*) as count FROM ${table.name}`).get();
+//         console.log(`  ${table.name}: ${count.count} 条记录`);
+//       }
+      
+//       // 检查AI设置状态
+//       try {
+//         const aiSettings = db.prepare('SELECT * FROM ai_model_settings WHERE is_active = 1').get();
+//         if (aiSettings) {
+//           console.log(`🤖 当前AI设置: ${aiSettings.model_type} v${aiSettings.version}`);
+//         }
+//       } catch (error) {
+//         console.log('⚠️ AI设置表不存在');
+//       }
+      
+//     } catch (error) {
+//       console.error('❌ 检查状态失败:', error);
+//     } finally {
+//       db.close();
+//     }
+//   }
+// };
+
+// // 命令行支持
+// if (require.main === module) {
+//   const command = process.argv[2];
+  
+//   switch (command) {
+//     case 'migrate':
+//       migrationManager.runMigration().catch(console.error);
+//       break;
+//     case 'rollback':
+//       migrationManager.rollback().catch(console.error);
+//       break;
+//     case 'status':
+//       migrationManager.checkStatus().catch(console.error);
+//       break;
+//     default:
+//       console.log('使用方法:');
+//       console.log('  node migrate_concurrent_isolation.js migrate   # 执行迁移');
+//       console.log('  node migrate_concurrent_isolation.js rollback  # 回滚迁移');
+//       console.log('  node migrate_concurrent_isolation.js status    # 检查状态');
+//   }
+// }
+
+// module.exports = migrationManager;
