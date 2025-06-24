@@ -3,6 +3,7 @@ const router = express.Router();
 const aiService = require('../utils/aiService');
 const database = require('../database/database'); // 🏷️ 新增：数据库操作
 const webSocketService = require('../utils/websocketServiceStub'); // 🔄 临时：WebSocket桩服务
+const { requireAuth, requireAdmin } = require('../middleware/auth'); // 🔒 新增：认证中间件
 
 // 内存存储测试数据
 let quizSessions = new Map();
@@ -308,17 +309,40 @@ router.post('/generate-tag', async (req, res) => {
         retryable: true
       });
     }
-    console.log('✅ AI服务可用');
-
-    console.log('📚 开始生成基于标签的测试题目...');
+    console.log('✅ AI服务可用');    console.log('📚 开始生成基于标签的测试题目...');
+      // 🔧 新增：获取当前AI设置，增强日志
+    const userRole = req.user?.role || 'user';
+    const isAdmin = userRole === 'admin' || userRole === 'sub_admin';
+    let currentModel = 'local'; // 默认本地模型
     
     try {
-      // 🔧 修复：直接使用generateQuestions方法而不是generateTagQuestions
+      // 获取当前AI设置
+      const currentAISettings = global.currentAISettings || { currentModel: 'local' };
+      currentModel = isAdmin ? currentAISettings.currentModel : 'local';
+      
+      console.log(`🤖 标签Quiz生成详细信息:`, {
+        用户ID: userId,
+        用户权限: userRole,
+        是否管理员: isAdmin,
+        全局模型设置: currentAISettings.currentModel,
+        AI总开关: currentAISettings.isAIEnabled,
+        实际使用模型: currentModel,
+        题目数量: count,
+        难度: difficulty,
+        全局设置对象: global.currentAISettings
+      });
+    } catch (error) {
+      console.warn('⚠️ 获取AI设置失败，使用默认本地模型:', error.message);
+    }
+    
+    try {
+      // 🔧 修复：直接使用generateQuestions方法，并传递当前AI设置
       const questionsResult = await aiService.generateQuestions(
         contentForTest,
         1, // 综合测试阶段
         difficulty,
-        parseInt(count)
+        parseInt(count),
+        currentModel // 🔧 新增：传递当前AI模型设置
       );
 
       console.log('🔍 标签AI生成结果:', {
@@ -545,17 +569,40 @@ router.post('/generate', async (req, res) => {
         retryable: true
       });
     }
-    console.log('✅ AI服务可用');
-
-    console.log('📚 开始生成基于文件的测试题目...');
+    console.log('✅ AI服务可用');    console.log('📚 开始生成基于文件的测试题目...');
+      // 🔧 新增：获取当前AI设置，增强日志
+    const userRole = req.user?.role || 'user';
+    const isAdmin = userRole === 'admin' || userRole === 'sub_admin';
+    let currentModel = 'local'; // 默认本地模型
     
     try {
-      // 使用文件内容生成题目
+      // 获取当前AI设置
+      const currentAISettings = global.currentAISettings || { currentModel: 'local' };
+      currentModel = isAdmin ? currentAISettings.currentModel : 'local';
+      
+      console.log(`🤖 文件Quiz生成详细信息:`, {
+        用户ID: userId,
+        用户权限: userRole,
+        是否管理员: isAdmin,
+        全局模型设置: currentAISettings.currentModel,
+        AI总开关: currentAISettings.isAIEnabled,
+        实际使用模型: currentModel,
+        文件ID: fileId,
+        题目数量: count,
+        难度: difficulty,
+        全局设置对象: global.currentAISettings
+      });
+    } catch (error) {
+      console.warn('⚠️ 获取AI设置失败，使用默认本地模型:', error.message);
+    }
+      try {
+      // 使用文件内容生成题目，并传递当前AI设置
       const questionsResult = await aiService.generateQuestions(
         file.content,
         1, // 单文件测试使用第1阶段
         difficulty,
-        parseInt(count)
+        parseInt(count),
+        currentModel // 🔧 新增：传递当前AI模型设置
       );
 
       console.log('🔍 文件AI生成结果:', {
@@ -649,10 +696,13 @@ router.post('/generate', async (req, res) => {
   }
 });
 
-// 🏷️ 新增：获取可用的学习材料（用于测试选择页面）
-router.get('/materials', async (req, res) => {
+// 🏷️ 修复：获取可用的学习材料（用于测试选择页面）- 添加权限控制
+router.get('/materials', requireAuth, async (req, res) => {
   try {
     console.log('📚 获取测试可用的学习材料...');
+    
+    const userId = req.user.id;
+    const isAdmin = req.user.role === 'admin' || req.user.role === 'sub_admin';
     
     // 获取文件数据库
     const uploadModule = require('./upload');
@@ -666,9 +716,18 @@ router.get('/materials', async (req, res) => {
       tags: []
     };
     
-    // 1. 获取可用的文件材料
+    // 1. 获取可用的文件材料 - 加入权限控制
     if (fileDatabase && fileDatabase.length > 0) {
-      const completedFiles = fileDatabase.filter(file => 
+      let accessibleFiles = fileDatabase;
+      
+      // 🔒 权限控制：非管理员只能看到分配给自己的文件
+      if (!isAdmin) {
+        const visibleFileIds = database.fileVisibility.getVisibleFileIdsForUser(userId);
+        accessibleFiles = fileDatabase.filter(file => visibleFileIds.includes(file.id));
+        console.log(`🔒 用户${userId}可访问的文件: ${accessibleFiles.length}/${fileDatabase.length}`);
+      }
+      
+      const completedFiles = accessibleFiles.filter(file => 
         file.status === 'completed' && 
         file.aiAnalysis && 
         file.content &&
@@ -691,8 +750,7 @@ router.get('/materials', async (req, res) => {
       
       console.log(`📄 找到 ${materials.files.length} 个可用文件`);
     }
-    
-    // 2. 获取可用的标签材料
+      // 2. 获取可用的标签材料 - 加入权限控制
     try {
       const allTags = database.tags.getAllTags();
       
@@ -701,8 +759,15 @@ router.get('/materials', async (req, res) => {
           // 获取标签下的文件
           const tagFiles = database.tags.getTagFiles(tag.id);
           
+          // 🔒 权限控制：过滤用户可访问的文件
+          let accessibleTagFiles = tagFiles;
+          if (!isAdmin) {
+            const visibleFileIds = database.fileVisibility.getVisibleFileIdsForUser(userId);
+            accessibleTagFiles = tagFiles.filter(tf => visibleFileIds.includes(tf.file_id));
+          }
+          
           // 检查是否有已完成分析的文件
-          const validFiles = tagFiles.filter(tf => {
+          const validFiles = accessibleTagFiles.filter(tf => {
             const file = fileDatabase.find(f => f.id === tf.file_id);
             return file && file.status === 'completed' && file.aiAnalysis && file.content;
           });

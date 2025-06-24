@@ -11,6 +11,7 @@ import {
 } from '@ant-design/icons';
 import axios from 'axios';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { useAIModel } from '../contexts/AIModelContext';
 
 const { Title, Text, Paragraph } = Typography;
@@ -39,7 +40,8 @@ interface QuizResult {
 }
 
 const QuizPage: React.FC = () => {
-  const { currentModel } = useAIModel(); // 🤖 获取当前AI模型
+  const { t } = useTranslation();
+  const { currentModel, checkForUpdates, settingsVersion } = useAIModel(); // 🔧 增加AI设置同步功能
   const navigate = useNavigate();
   const location = useLocation();
   
@@ -1091,6 +1093,45 @@ const QuizPage: React.FC = () => {
       }
     };
   }, [sessionId, questions.length, quizCompleted, saveQuizProgress]);
+
+  // 🔧 新增：监听AI设置变更事件
+  useEffect(() => {
+    const handleAISettingsUpdate = (event: CustomEvent) => {
+      console.log('🤖 Quiz页面：检测到AI设置更新', {
+        newSettings: event.detail.settings,
+        version: event.detail.version,
+        timestamp: event.detail.timestamp
+      });
+      
+      // 如果正在测试中，显示提示信息
+      if (questions.length > 0 && !quizCompleted) {
+        message.info({
+          content: '⚙️ AI模型设置已更新，可能影响题目生成',
+          duration: 4
+        });
+      }
+    };
+
+    window.addEventListener('ai-settings-updated', handleAISettingsUpdate as EventListener);
+    return () => window.removeEventListener('ai-settings-updated', handleAISettingsUpdate as EventListener);
+  }, [questions.length, quizCompleted]);
+
+  // 🔧 新增：页面加载时检查AI设置更新
+  useEffect(() => {
+    const initializeAISettings = async () => {
+      try {
+        console.log('🔄 Quiz页面加载，检查AI设置更新...');
+        const hasUpdates = await checkForUpdates();
+        if (hasUpdates) {
+          console.log('✅ Quiz页面：AI设置已更新');
+        }
+      } catch (error) {
+        console.error('❌ Quiz页面检查AI设置失败:', error);
+      }
+    };
+    
+    initializeAISettings();
+  }, []); // 只在组件加载时执行一次
 
   if (loading) {
     return (

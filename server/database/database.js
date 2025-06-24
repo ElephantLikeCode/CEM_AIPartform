@@ -107,12 +107,11 @@ const initDatabase = () => {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
-    `);
-
-    // 检查并添加新字段到已存在的学习进度表
+    `);    // 检查并添加新字段到已存在的学习进度表
     const progressTableInfo = db.prepare("PRAGMA table_info(learning_progress)").all();
     const hasTagIdColumn = progressTableInfo.some(column => column.name === 'tag_id');
     const hasLearningTypeColumn = progressTableInfo.some(column => column.name === 'learning_type');
+    const hasTestScoreColumn = progressTableInfo.some(column => column.name === 'test_score');
     
     if (!hasTagIdColumn) {
       db.exec(`ALTER TABLE learning_progress ADD COLUMN tag_id INTEGER`);
@@ -122,6 +121,11 @@ const initDatabase = () => {
     if (!hasLearningTypeColumn) {
       db.exec(`ALTER TABLE learning_progress ADD COLUMN learning_type VARCHAR(50) DEFAULT 'file'`);
       console.log('✅ 已添加learning_type字段到learning_progress表');
+    }
+
+    if (!hasTestScoreColumn) {
+      db.exec(`ALTER TABLE learning_progress ADD COLUMN test_score INTEGER`);
+      console.log('✅ 已添加test_score字段到learning_progress表');
     }
 
     // 🏷️ 新增：创建标签学习内容表（存储基于标签的合并学习内容）
@@ -1267,7 +1271,6 @@ const learningProgressOperations = {
       throw error;
     }
   },
-
   // 清理用户的学习进度
   clearUserProgress: (userId, tagId = null) => {
     try {
@@ -1289,6 +1292,136 @@ const learningProgressOperations = {
     } catch (error) {
       console.error('清理学习进度失败:', error);
       throw error;
+    }
+  },
+
+  // 🔧 新增：保存基于文件的学习进度（仅在学习完成且测试通过80分时保存）
+  saveFileProgress: (userId, fileId, currentStage, totalStages, completed = false, testScore = null) => {
+    try {
+      const userIdInt = parseInt(userId);
+      const currentStageInt = parseInt(currentStage);
+      const totalStagesInt = parseInt(totalStages);
+      const completedBool = Boolean(completed);
+      const testScoreInt = testScore ? parseInt(testScore) : null;
+      
+      console.log('💾 保存文件学习进度:', {
+        userId: userIdInt,
+        fileId,
+        currentStage: currentStageInt,
+        totalStages: totalStagesInt,
+        completed: completedBool,
+        testScore: testScoreInt
+      });
+      
+      if (isNaN(userIdInt) || isNaN(currentStageInt) || isNaN(totalStagesInt)) {
+        throw new Error('参数类型错误：userId, currentStage, totalStages 必须是数字');
+      }
+
+      // 🔧 只有在学习完成且测试分数大于等于80时才保存进度
+      if (!completedBool || !testScoreInt || testScoreInt < 80) {
+        console.log('⚠️ 未达到保存条件 - 必须完成学习且测试分数≥80');
+        return null;
+      }
+      
+      const existing = db.prepare('SELECT id FROM learning_progress WHERE user_id = ? AND file_id = ?').get(userIdInt, fileId);
+      
+      if (existing) {
+        return db.prepare(`
+          UPDATE learning_progress 
+          SET current_stage = ?, total_stages = ?, completed = ?, test_score = ?, learning_type = 'file', updated_at = CURRENT_TIMESTAMP
+          WHERE user_id = ? AND file_id = ?
+        `).run(currentStageInt, totalStagesInt, 1, testScoreInt, userIdInt, fileId);
+      } else {
+        return db.prepare(`
+          INSERT INTO learning_progress (user_id, file_id, current_stage, total_stages, completed, test_score, learning_type)
+          VALUES (?, ?, ?, ?, ?, ?, 'file')
+        `).run(userIdInt, fileId, currentStageInt, totalStagesInt, 1, testScoreInt);
+      }
+    } catch (error) {
+      console.error('保存文件学习进度失败:', error);
+      throw error;
+    }
+  },
+
+  // 🔧 新增：获取用户的文件学习进度
+  getFileProgress: (userId, fileId) => {
+    try {
+      const userIdInt = parseInt(userId);
+      
+      if (isNaN(userIdInt)) {
+        throw new Error('参数类型错误：userId 必须是数字');
+      }
+      
+      return db.prepare('SELECT * FROM learning_progress WHERE user_id = ? AND file_id = ? AND learning_type = "file"').get(userIdInt, fileId);
+    } catch (error) {
+      console.error('获取文件学习进度失败:', error);
+      throw error;
+    }
+  },
+
+  // 🔧 新增：检查用户是否可以学习指定文件（按标签顺序）
+  canUserLearnFile: (userId, fileId) => {
+    try {
+      const userIdInt = parseInt(userId);
+      
+      if (isNaN(userIdInt)) {
+        throw new Error('参数类型错误：userId 必须是数字');
+      }
+
+      // 获取文件所属的标签
+      const fileTagQuery = db.prepare(`
+        SELECT ft.tag_id, tfo.order_index 
+        FROM file_tags ft
+        JOIN tag_file_order tfo ON ft.file_id = tfo.file_id AND ft.tag_id = tfo.tag_id
+        WHERE ft.file_id = ?
+        ORDER BY tfo.order_index ASC
+        LIMIT 1
+      `);
+      
+      const fileTag = fileTagQuery.get(fileId);
+      if (!fileTag) {
+        console.log('⚠️ 文件未关联任何标签，允许学习');
+        return true;
+      }
+
+      // 获取同一标签下所有文件的顺序
+      const tagFiles = db.prepare(`
+        SELECT tfo.file_id, tfo.order_index
+        FROM tag_file_order tfo
+        WHERE tfo.tag_id = ?
+        ORDER BY tfo.order_index ASC
+      `).all(fileTag.tag_id);
+
+      // 找到当前文件在序列中的位置
+      const currentFileIndex = tagFiles.findIndex(f => f.file_id === fileId);
+      if (currentFileIndex === -1) {
+        console.log('⚠️ 文件不在标签序列中，允许学习');
+        return true;
+      }
+
+      // 如果是第一个文件，直接允许学习
+      if (currentFileIndex === 0) {
+        console.log('✅ 第一个文件，允许学习');
+        return true;
+      }
+
+      // 检查前一个文件是否已完成学习（测试分数≥80）
+      const previousFile = tagFiles[currentFileIndex - 1];
+      const previousProgress = db.prepare(`
+        SELECT * FROM learning_progress 
+        WHERE user_id = ? AND file_id = ? AND learning_type = 'file' AND completed = 1 AND test_score >= 80
+      `).get(userIdInt, previousFile.file_id);
+
+      if (previousProgress) {
+        console.log('✅ 前置文件已完成，允许学习');
+        return true;
+      } else {
+        console.log('❌ 前置文件未完成，不允许学习');
+        return false;
+      }
+    } catch (error) {
+      console.error('检查学习权限失败:', error);
+      return false;
     }
   }
 };
@@ -1401,9 +1534,14 @@ module.exports = {
 
   // 🏷️ 新增：导出标签相关操作
   tags: tagOperations,
-
   // 🏷️ 新增：导出学习进度相关操作  
   learningProgress: learningProgressOperations,
+  
+  // 🔧 新增：导出兼容性函数（用于旧代码）
+  saveTagProgress: learningProgressOperations.saveTagProgress,
+  saveFileProgress: learningProgressOperations.saveFileProgress,
+  getFileProgress: learningProgressOperations.getFileProgress,
+  canUserLearnFile: learningProgressOperations.canUserLearnFile,
 
   // 🔧 新增：导出文件相关操作
   files: fileOperations,

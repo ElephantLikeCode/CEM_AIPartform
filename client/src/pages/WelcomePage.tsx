@@ -5,10 +5,13 @@ import {
   RightOutlined, StarOutlined, ThunderboltOutlined, HeartOutlined, RobotOutlined
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
+import LanguageSwitcher from '../components/LanguageSwitcher';
 
 const { Title, Paragraph, Text } = Typography;
 
 const WelcomePage: React.FC = () => {
+  const { t } = useTranslation();
   const [loading, setLoading] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const navigate = useNavigate();
@@ -23,27 +26,26 @@ const WelcomePage: React.FC = () => {
     window.addEventListener('resize', checkMobile);
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
-
   const features = [
     {
       icon: <DatabaseOutlined style={{ fontSize: 32, color: '#1890ff' }} />,
-      title: '智能分析',
-      description: 'AI自動提取文檔核心要點'
+      title: t('welcome.features.smartAnalysis.title'),
+      description: t('welcome.features.smartAnalysis.description')
     },
     {
       icon: <BookOutlined style={{ fontSize: 32, color: '#52c41a' }} />,
-      title: '個性化學習',
-      description: '量身定製學習路徑'
+      title: t('welcome.features.personalizedLearning.title'),
+      description: t('welcome.features.personalizedLearning.description')
     },
     {
       icon: <RobotOutlined style={{ fontSize: 32, color: '#722ed1' }} />,
-      title: 'AI助手',
-      description: '24/7智能問答指導'
+      title: t('welcome.features.aiAssistant.title'),
+      description: t('welcome.features.aiAssistant.description')
     },
     {
       icon: <TrophyOutlined style={{ fontSize: 32, color: '#fa8c16' }} />,
-      title: '智能測評',
-      description: '全面評估學習效果'
+      title: t('welcome.features.smartEvaluation.title'),
+      description: t('welcome.features.smartEvaluation.description')
     }
   ];
 
@@ -84,9 +86,19 @@ const WelcomePage: React.FC = () => {
         textAlign: 'center',
         position: 'relative',
         zIndex: 1
-      }}>
-        {/* 标题区域 */}
-        <div className="welcome-hero-section" style={{ marginBottom: isMobile ? 24 : 36 }}>          <img 
+      }}>        {/* 标题区域 */}
+        <div className="welcome-hero-section" style={{ marginBottom: isMobile ? 24 : 36 }}>
+          {/* 语言切换器 */}
+          <div style={{ 
+            position: 'absolute', 
+            top: isMobile ? '10px' : '20px', 
+            right: isMobile ? '10px' : '20px',
+            zIndex: 1000
+          }}>
+            <LanguageSwitcher />
+          </div>
+          
+          <img
             src="https://www.cem-macau.com/_nuxt/img/logo.5ab12fa.svg"
             alt="STGC3000 Logo"
             style={{ 
@@ -101,24 +113,22 @@ const WelcomePage: React.FC = () => {
               e.currentTarget.parentNode?.insertBefore(fallbackIcon, e.currentTarget);
             }}
           />
-          
-          <Title className="welcome-title" level={1} style={{ 
+            <Title className="welcome-title" level={1} style={{ 
             color: '#fff', 
             fontSize: isMobile ? 24 : 38,
             fontWeight: 700,
             margin: 0,
             textShadow: '0 2px 4px rgba(0,0,0,0.3)'
           }}>
-            {isMobile ? 'CEM AI學習平台' : '澳電CEM AI智能學習平台'}
+            {t('common.title')}
           </Title>
-          
-          <Paragraph className="welcome-subtitle" style={{ 
+            <Paragraph className="welcome-subtitle" style={{ 
             color: 'rgba(255,255,255,0.9)', 
             fontSize: isMobile ? 14 : 15,
             margin: '12px auto 0 auto',
             maxWidth: 500
           }}>
-            上傳文檔 → AI分析 → 個性化學習 → 智能測評
+            {t('welcome.workflow')}
           </Paragraph>
         </div>        {/* 功能特性 */}
         <Card
@@ -163,19 +173,19 @@ const WelcomePage: React.FC = () => {
               <Col span={8}>
                 <div style={{ textAlign: 'center', color: '#fff' }}>
                 <StarOutlined style={{ fontSize: 20, marginBottom: 6 }} />
-                <div style={{ fontSize: 14, fontWeight: 600 }}>AI驅動</div>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>{t('welcome.highlights.aiDriven')}</div>
               </div>
             </Col>
             <Col span={8}>
               <div style={{ textAlign: 'center', color: '#fff' }}>
                 <ThunderboltOutlined style={{ fontSize: 20, marginBottom: 6 }} />
-                <div style={{ fontSize: 14, fontWeight: 600 }}>高效學習</div>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>{t('welcome.highlights.efficientLearning')}</div>
               </div>
             </Col>
             <Col span={8}>
               <div style={{ textAlign: 'center', color: '#fff' }}>
                 <HeartOutlined style={{ fontSize: 20, marginBottom: 6 }} />
-                <div style={{ fontSize: 14, fontWeight: 600 }}>個性化</div>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>{t('welcome.highlights.personalized')}</div>
               </div>
             </Col>          </Row>
         </div>
@@ -200,7 +210,7 @@ const WelcomePage: React.FC = () => {
               boxShadow: '0 4px 16px rgba(102, 126, 234, 0.4)'
             }}
           >
-            {loading ? '正在進入...' : (isMobile ? '進入平台' : '🚀 進入平台')}
+            {loading ? t('welcome.cta.entering') : (isMobile ? t('welcome.cta.enterPlatformMobile') : t('welcome.cta.enterPlatform'))}
           </Button>
           
           {!loading && (            <Text style={{ 
@@ -208,7 +218,7 @@ const WelcomePage: React.FC = () => {
               fontSize: isMobile ? 12 : 13,
               marginTop: 8
             }}>
-              {isMobile ? '開始學習之旅' : '開始您的AI智能學習之旅'}
+              {isMobile ? t('welcome.cta.startJourneyMobile') : t('welcome.cta.startJourney')}
             </Text>
           )}
         </Space>

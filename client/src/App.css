@@ -1393,3 +1393,138 @@
     font-size: 70px !important;
   }
 }
+
+/* 手机端搜索框优化 */
+@media (max-width: 768px) {
+  /* 搜索框容器优化 */
+  .ant-input-affix-wrapper {
+    width: 100% !important;
+    height: 40px !important;
+    min-height: 40px !important;
+    font-size: 16px !important; /* 防止iOS自动缩放 */
+    border-radius: 6px !important;
+    padding: 0 12px !important;
+    display: flex !important;
+    align-items: center !important;
+  }
+  
+  /* 搜索框输入域优化 */
+  .ant-input-affix-wrapper .ant-input {
+    font-size: 14px !important;
+    border: none !important;
+    padding: 0 !important;
+    background: transparent !important;
+    outline: none !important;
+    box-shadow: none !important;
+    line-height: 1.5 !important;
+    height: auto !important;
+    flex: 1 !important;
+  }
+  
+  /* 搜索框前缀图标优化 */
+  .ant-input-affix-wrapper .ant-input-prefix {
+    margin-right: 8px !important;
+    color: #bfbfbf !important;
+    display: flex !important;
+    align-items: center !important;
+    font-size: 14px !important;
+  }
+    /* 搜索框清除按钮优化 */
+  .ant-input-affix-wrapper .ant-input-suffix {
+    margin-left: 8px !important;
+    display: flex !important;
+    align-items: center !important;
+  }
+  
+  .ant-input-affix-wrapper .ant-input-clear-icon {
+    color: #bfbfbf !important;
+    font-size: 12px !important;
+    padding: 2px !important;
+    border-radius: 50% !important;
+    transition: all 0.2s ease !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+  }
+  
+  .ant-input-affix-wrapper .ant-input-clear-icon:hover {
+    color: #999 !important;
+    background-color: #f5f5f5 !important;
+  }
+  
+  /* 搜索框聚焦状态优化 */
+  .ant-input-affix-wrapper:focus,
+  .ant-input-affix-wrapper-focused {
+    border-color: #1890ff !important;
+    box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.1) !important;
+  }
+    /* 搜索框placeholder文字优化 */
+  .ant-input-affix-wrapper .ant-input::placeholder {
+    color: #bfbfbf !important;
+    font-size: 14px !important;
+    line-height: 1.5 !important;
+  }
+  
+  /* 修复搜索框在Space组件中的布局 */
+  .ant-space-vertical .ant-input-affix-wrapper {
+    width: 100% !important;
+    margin: 0 !important;
+  }
+  
+  .ant-space-horizontal .ant-input-affix-wrapper {
+    flex: 1 !important;
+    min-width: 0 !important;
+  }
+  
+  /* 搜索框禁用状态优化 */
+  .ant-input-affix-wrapper-disabled {
+    background-color: #f5f5f5 !important;
+    border-color: #d9d9d9 !important;
+    color: #bfbfbf !important;
+    cursor: not-allowed !important;
+  }
+  
+  .ant-input-affix-wrapper-disabled .ant-input {
+    background-color: transparent !important;
+    color: #bfbfbf !important;
+    cursor: not-allowed !important;
+  }
+  
+  /* 搜索框错误状态优化 */
+  .ant-input-affix-wrapper-status-error {
+    border-color: #ff4d4f !important;
+  }
+  
+  .ant-input-affix-wrapper-status-error:focus,
+  .ant-input-affix-wrapper-status-error.ant-input-affix-wrapper-focused {
+    border-color: #ff4d4f !important;
+    box-shadow: 0 0 0 2px rgba(255, 77, 79, 0.2) !important;
+  }
+  
+  /* 数据库页面搜索区域特殊优化 */
+  .database-search-area .ant-space {
+    width: 100% !important;
+    flex-direction: column !important;
+  }
+  
+  .database-search-area .ant-space-item {
+    width: 100% !important;
+  }
+  
+  .database-search-area .ant-input-affix-wrapper {
+    margin-bottom: 12px !important;
+  }
+  
+  /* 筛选器下拉框在手机端的布局优化 */
+  .database-filters {
+    display: flex !important;
+    flex-direction: row !important;
+    gap: 8px !important;
+    width: 100% !important;
+  }
+  
+  .database-filters .ant-select {
+    flex: 1 !important;
+    min-width: 0 !important;
+  }
+}

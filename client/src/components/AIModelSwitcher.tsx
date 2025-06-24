@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { Card, Switch, Tooltip, Space, Typography, Alert, Spin, Divider } from 'antd';
+import { Card, Switch, Tooltip, Space, Typography, Alert, Spin, Divider, message } from 'antd';
 import { RobotOutlined, ApiOutlined, ExperimentOutlined, PoweroffOutlined, SettingOutlined } from '@ant-design/icons';
 import { useAIModel } from '../contexts/AIModelContext';
 import axios from 'axios';
@@ -21,7 +21,11 @@ const AIModelSwitcher: React.FC<AIModelSwitcherProps> = ({ className }) => {  co
     
     // DeepSeek可用性
     isDeepSeekAvailable, 
-    setIsDeepSeekAvailable 
+    setIsDeepSeekAvailable,
+    
+    // 🔧 新增：强制同步功能
+    forceSyncSettings,
+    isSyncing
   } = useAIModel();
   
   const [checking, setChecking] = React.useState(false);
@@ -43,8 +47,48 @@ const AIModelSwitcher: React.FC<AIModelSwitcherProps> = ({ className }) => {  co
   // 组件加载时检查DeepSeek可用性
   useEffect(() => {
     checkDeepSeekAvailability();
-  }, []);
-  const handleModelSwitch = (useDeepSeek: boolean) => {
+  }, []);  // 🔧 增强：AI总开关处理，直接调用后端API同步
+  const handleAIEnabledChange = async (enabled: boolean) => {
+    console.log(`🔄 管理员修改AI总开关: ${enabled ? '开启' : '关闭'}`);
+    
+    try {
+      // 🔧 直接调用后端API同步，而不是通过context
+      const response = await axios.post('/api/system/sync-ai-settings', {
+        isAIEnabled: enabled,
+        currentModel: currentModel,
+        reason: `管理员${enabled ? '开启' : '关闭'}AI功能`
+      });
+      
+      if (response.data.success) {
+        // 更新本地状态
+        setIsAIEnabled(enabled);
+        
+        // 立即触发强制同步，确保所有组件获得最新设置
+        await forceSyncSettings();
+        
+        message.success({
+          content: `✅ AI功能${enabled ? '开启' : '关闭'}成功，已通知所有用户`,
+          duration: 4
+        });
+        
+        // 🔧 触发跨标签页同步信号
+        localStorage.setItem('ai-settings-update-trigger', Date.now().toString());
+        setTimeout(() => {
+          localStorage.removeItem('ai-settings-update-trigger');
+        }, 1000);
+        
+        console.log(`✅ AI总开关设置完成: ${enabled}, 版本: ${response.data.version}`);
+      } else {
+        throw new Error(response.data.message || '设置失败');
+      }
+      
+    } catch (error) {
+      console.error('❌ AI开关设置失败:', error);
+      message.error('AI开关设置失败，请重试');
+    }
+  };
+  // 🔧 增强：AI模型切换处理，直接调用后端API同步
+  const handleModelSwitch = async (useDeepSeek: boolean) => {
     if (!isAIEnabled) return; // AI总开关关闭时不允许切换
     
     if (useDeepSeek && !isDeepSeekAvailable) {
@@ -53,7 +97,43 @@ const AIModelSwitcher: React.FC<AIModelSwitcherProps> = ({ className }) => {  co
       return;
     }
     
-    setCurrentModel(useDeepSeek ? 'deepseek' : 'local');
+    const newModel = useDeepSeek ? 'deepseek' : 'local';
+    console.log(`🔄 管理员修改AI模型: ${currentModel} -> ${newModel}`);
+    
+    try {
+      // 🔧 直接调用后端API同步，而不是通过context
+      const response = await axios.post('/api/system/sync-ai-settings', {
+        isAIEnabled: isAIEnabled,
+        currentModel: newModel,
+        reason: `管理员切换模型: ${currentModel} -> ${newModel}`
+      });
+      
+      if (response.data.success) {
+        // 更新本地状态
+        setCurrentModel(newModel);
+        
+        // 立即触发强制同步，确保所有组件获得最新设置
+        await forceSyncSettings();
+        
+        message.success({
+          content: `✅ AI模型已切换为${useDeepSeek ? 'DeepSeek API' : '本地模型'}，已通知所有用户`,
+          duration: 4
+        });
+        
+        // 🔧 触发跨标签页同步信号
+        localStorage.setItem('ai-settings-update-trigger', Date.now().toString());
+        setTimeout(() => {
+          localStorage.removeItem('ai-settings-update-trigger');
+        }, 1000);
+        
+        console.log(`✅ AI模型切换完成: ${newModel}, 版本: ${response.data.version}`);
+      } else {
+        throw new Error(response.data.message || '切换失败');
+      }
+        } catch (error) {
+      console.error('❌ AI模型切换失败:', error);
+      message.error('AI模型切换失败，请重试');
+    }
   };
 
   return (
@@ -71,13 +151,13 @@ const AIModelSwitcher: React.FC<AIModelSwitcherProps> = ({ className }) => {  co
               AI功能总开关
             </Title>
           </Space>
-          
-          <Tooltip title={isAIEnabled ? "关闭所有AI功能" : "启用AI功能"}>
+            <Tooltip title={isAIEnabled ? "关闭所有AI功能" : "启用AI功能"}>
             <Switch
               checked={isAIEnabled}
-              onChange={setIsAIEnabled}
+              onChange={handleAIEnabledChange}
               checkedChildren="开启"
               unCheckedChildren="关闭"
+              loading={isSyncing}
             />
           </Tooltip>
         </Space>
@@ -85,14 +165,13 @@ const AIModelSwitcher: React.FC<AIModelSwitcherProps> = ({ className }) => {  co
         {isAIEnabled && (
           <>
             <Divider style={{ margin: '12px 0' }} />
-              {/* 模型选择区域 */}
-            <div style={{ textAlign: 'center', marginBottom: 12 }}>
+              {/* 模型选择区域 */}            <div style={{ textAlign: 'center', marginBottom: 12 }}>
               <Space align="center">
                 <RobotOutlined style={{ fontSize: '18px', color: '#1890ff' }} />
                 <Title level={5} style={{ margin: 0 }}>
                   AI模型选择
                 </Title>
-                {checking && <Spin size="small" />}
+                {(checking || isSyncing) && <Spin size="small" />}
               </Space>
             </div>
             
@@ -114,14 +193,13 @@ const AIModelSwitcher: React.FC<AIModelSwitcherProps> = ({ className }) => {  co
                     ? "切换AI模型：本地模型 ↔ DeepSeek API" 
                     : "DeepSeek API不可用，请检查配置"
                 }
-              >
-                <Switch
+              >                <Switch
                   checked={currentModel === 'deepseek'}
                   onChange={handleModelSwitch}
                   disabled={!isDeepSeekAvailable}
                   checkedChildren={<ApiOutlined />}
                   unCheckedChildren={<ExperimentOutlined />}
-                  loading={checking}
+                  loading={checking || isSyncing}
                 />
               </Tooltip>
               
@@ -153,9 +231,9 @@ const AIModelSwitcher: React.FC<AIModelSwitcherProps> = ({ className }) => {  co
             showIcon
           />
         )}
-        
-        <Text type="secondary" style={{ fontSize: '12px' }}>
+          <Text type="secondary" style={{ fontSize: '12px' }}>
           当前设置将影响所有AI功能：文档分析、学习教程、题目生成等
+          {isSyncing && ' • 正在同步设置...'}
         </Text>
       </Space>
     </Card>

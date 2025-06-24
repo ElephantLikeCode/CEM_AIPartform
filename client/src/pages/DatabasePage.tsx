@@ -15,6 +15,7 @@ import {
 } from '@ant-design/icons';
 import axios from 'axios';
 import { debounce } from 'lodash';
+import { useTranslation } from 'react-i18next';
 import AIModelSwitcher from '../components/AIModelSwitcher';
 import { useAIModel } from '../contexts/AIModelContext';
 
@@ -134,7 +135,8 @@ const formatTimeDisplay = (uploadTime: string, uploadTimestamp?: number, relativ
 };
 
 const DatabasePage = () => {
-  const { currentModel } = useAIModel(); // 🤖 新增：获取当前AI模型
+  const { t } = useTranslation();
+  const { currentModel, checkForUpdates, settingsVersion } = useAIModel(); // 🔧 增加AI设置同步功能
   const [files, setFiles] = useState<FileItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -145,6 +147,19 @@ const DatabasePage = () => {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [sortField, setSortField] = useState<string>('uploadTime');
   const [sortDirection, setSortDirection] = useState<'ascend' | 'descend'>('descend');
+  
+  // 🔧 新增：移动端检测
+  const [isMobile, setIsMobile] = useState<boolean>(false);
+  
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
   
   // 🏷️ 新增：标签管理相关状态
   const [tags, setTags] = useState<TagItem[]>([]);
@@ -187,9 +202,8 @@ const DatabasePage = () => {
         const newTags = response.data.data || [];
         setTags(newTags);
         console.log('✅ 标签列表获取成功:', newTags.length, '个');
-        
-        // 🔧 修复：检查当前筛选的标签是否还存在，如果不存在则清除筛选
-        if (filterTag && !newTags.some(tag => tag.id === filterTag)) {
+          // 🔧 修复：检查当前筛选的标签是否还存在，如果不存在则清除筛选
+        if (filterTag && !newTags.some((tag: TagItem) => tag.id === filterTag)) {
           console.log('🔄 当前筛选的标签已被删除，清除筛选状态');
           setFilterTag(null);
         }
@@ -700,9 +714,8 @@ const DatabasePage = () => {
       )
     }
   ], [viewFileDetails, reprocessFile, deleteFile, sortField, sortDirection, filterStatus, openFileTagModal]);
-
   // 处理表格排序和筛选变化
-  const handleTableChange = useCallback((pagination: any, filters: any, sorter: any) => {
+  const handleTableChange = useCallback((_pagination: any, filters: any, sorter: any) => {
     if (sorter && sorter.field) {
       setSortField(sorter.field);
       setSortDirection(sorter.order || 'descend');
@@ -750,19 +763,70 @@ const DatabasePage = () => {
   }, [searchText, filterStatus, filterTag]);
   // 🤖 删除DeepSeek相关功能，只保留总开关控制
   // AI分析功能现在由总开关统一控制
+  // 🔧 新增：监听AI设置变更事件
+  useEffect(() => {
+    const handleAISettingsUpdate = (event: CustomEvent) => {
+      console.log('🤖 Database页面：检测到AI设置更新', {
+        newSettings: event.detail.settings,
+        version: event.detail.version,
+        timestamp: event.detail.timestamp
+      });
+      
+      // 显示设置更新提示，特别是对AI分析功能的影响
+      message.info({
+        content: '⚙️ AI模型设置已更新，AI分析功能可能受影响',
+        duration: 4
+      });
+      
+      // 如果正在进行AI分析，可以提示用户
+      if (aiAnalysisLoading) {
+        message.warning({
+          content: '⚠️ AI设置变更可能影响正在进行的AI分析任务',
+          duration: 6
+        });
+      }
+    };
+
+    window.addEventListener('ai-settings-updated', handleAISettingsUpdate as EventListener);
+    return () => window.removeEventListener('ai-settings-updated', handleAISettingsUpdate as EventListener);
+  }, [aiAnalysisLoading]);
+
+  // 🔧 新增：页面加载时检查AI设置更新
+  useEffect(() => {
+    const initializeAISettings = async () => {
+      try {
+        console.log('🔄 Database页面加载，检查AI设置更新...');
+        const hasUpdates = await checkForUpdates();
+        if (hasUpdates) {
+          console.log('✅ Database页面：AI设置已更新');
+        }
+      } catch (error) {
+        console.error('❌ Database页面检查AI设置失败:', error);
+      }
+    };
+    
+    initializeAISettings();
+  }, []); // 只在组件加载时执行一次
+
   return (
     <div>
       {/* 🤖 新增：AI模型切换器 */}
       <AIModelSwitcher />
-      
-      <Card title="檔案上傳與AI分析" extra={
-        <Space>
-          {/* 🏷️ 新增：标签管理按钮 */}
-          <Button icon={<TagsOutlined />} onClick={() => openTagModal()}>
-            新增標籤
+        <Card title={t('database.title')} extra={
+        <Space direction={isMobile ? "vertical" : "horizontal"} size={isMobile ? "small" : "middle"}>
+          {/* 🏷️ 新增：标签管理按钮 */}          <Button 
+            icon={<TagsOutlined />} 
+            onClick={() => openTagModal()}
+            size={isMobile ? "small" : "middle"}
+          >
+            {isMobile ? "新增" : "新增標籤"}
           </Button>
-          <Button icon={<ReloadOutlined />} onClick={fetchFiles}>
-            重新整理清單
+          <Button 
+            icon={<ReloadOutlined />} 
+            onClick={fetchFiles}
+            size={isMobile ? "small" : "middle"}
+          >
+            {isMobile ? "刷新" : "重新整理清單"}
           </Button>
         </Space>
       }>
@@ -791,20 +855,23 @@ const DatabasePage = () => {
                     <span>{tag.name}</span>
                     <Text type="secondary" style={{ fontSize: 11 }}>
                       ({tag.fileCount || 0})
-                    </Text>
-                    <Button 
+                    </Text>                    <Button 
                       type="text" 
                       size="small" 
                       icon={<EditOutlined />}
                       onClick={(e) => {
                         e.stopPropagation();
+                        e.preventDefault();
                         openTagModal(tag);
                       }}
                       style={{ padding: 0, fontSize: 10 }}
-                    />
-                    <Popconfirm
+                    /><Popconfirm
                       title={`確定要刪除標籤"${tag.name}"嗎？`}
-                      onConfirm={() => handleDeleteTag(tag.id)}
+                      onConfirm={(e) => {
+                        e?.stopPropagation();
+                        handleDeleteTag(tag.id);
+                      }}
+                      onCancel={(e) => e?.stopPropagation()}
                       okText="確定"
                       cancelText="取消"
                     >
@@ -813,7 +880,10 @@ const DatabasePage = () => {
                         size="small" 
                         danger
                         icon={<DeleteOutlined />}
-                        onClick={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          e.preventDefault();
+                        }}
                         style={{ padding: 0, fontSize: 10 }}
                       />
                     </Popconfirm>
@@ -860,24 +930,30 @@ const DatabasePage = () => {
             <Progress percent={uploadProgress} status="active" />
             <Text>檔案上傳中，請稍候...</Text>
           </Card>
-        )}
-
-        <Card style={{ marginBottom: 16 }} styles={{ body: { padding: '12px 16px' } }}>
-          <Space style={{ width: '100%', justifyContent: 'space-between' }}>
-            <Search
-              placeholder="搜尋檔案名..."
+        )}        
+        <Card style={{ marginBottom: 16 }} styles={{ body: { padding: isMobile ? '8px 12px' : '12px 16px' } }}>
+          <Space 
+            style={{ width: '100%' }} 
+            direction={isMobile ? "vertical" : "horizontal"}
+            size={isMobile ? "small" : "middle"}
+          >            <Search
+              placeholder={t('database.searchPlaceholder')}
               allowClear
               onSearch={handleSearch}
               onChange={(e) => handleSearch(e.target.value)}
-              style={{ width: 300 }}
+              style={{ width: isMobile ? '100%' : 300 }}
               prefix={<SearchOutlined />}
             />
-            <Space>
+            <Space 
+              wrap 
+              size="small"
+              style={{ width: isMobile ? '100%' : 'auto', justifyContent: isMobile ? 'space-between' : 'flex-start' }}
+            >
               <Tooltip title="按狀態篩選">
                 <Select 
                   placeholder="按狀態篩選" 
                   allowClear
-                  style={{ width: 150 }}
+                  style={{ width: isMobile ? 'calc(50% - 4px)' : 150 }}
                   onChange={(value) => setFilterStatus(value)}
                   value={filterStatus}
                   suffixIcon={<FilterOutlined />}
@@ -888,11 +964,12 @@ const DatabasePage = () => {
                   <Option value="failed">處理失敗</Option>
                 </Select>
               </Tooltip>
-              {/* 🏷️ 新增：标签筛选下拉框 */}              <Tooltip title="按標籤篩選">
+              {/* 🏷️ 新增：标签筛选下拉框 */}              
+              <Tooltip title="按標籤篩選">
                 <Select 
                   placeholder="按標籤篩選" 
                   allowClear
-                  style={{ width: 150 }}
+                  style={{ width: isMobile ? 'calc(50% - 4px)' : 150 }}
                   onChange={(value) => setFilterTag(value)}
                   value={filterTag}
                   suffixIcon={<TagsOutlined />}
@@ -934,14 +1011,15 @@ const DatabasePage = () => {
         )}
       </Card>      {/* 文件詳情模態框 */}
       <Modal
-        title="檔案詳情與AI分析結果"
+        title={t('database.fileDetails')}
         open={detailModalVisible}
         onCancel={() => setDetailModalVisible(false)}
         footer={null}
-        width={800}
+        width={isMobile ? '95vw' : 800}
+        style={{ top: isMobile ? 20 : 20 }}
+        centered={isMobile}
         className="file-detail-modal"
-        style={{ top: 20 }}
-      >        {selectedFile && (
+      >{selectedFile && (
           <div>
             <Descriptions 
               bordered 
@@ -1025,12 +1103,12 @@ const DatabasePage = () => {
           setTagModalVisible(false);
           setEditingTag(null);
           tagForm.resetFields();
-        }}
-        onOk={() => tagForm.submit()}
+        }}        onOk={() => tagForm.submit()}
         okText="保存"
         cancelText="取消"
         className="tag-modal"
-        width={480}
+        width={isMobile ? '90vw' : 480}
+        centered={isMobile}
       >
         <Form
           form={tagForm}
@@ -1071,7 +1149,8 @@ const DatabasePage = () => {
         okText="保存"
         cancelText="取消"
         className="tag-modal"
-        width={520}
+        width={isMobile ? '90vw' : 520}
+        centered={isMobile}
       >
         <div style={{ marginBottom: 16 }}>
           <Text strong>選擇標籤：</Text>

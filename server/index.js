@@ -143,7 +143,7 @@ app.use('/uploads', express.static(uploadsDir));
 // 路由配置（添加角色权限控制）
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', requireAdmin, adminRoutes);  // 管理员专用路由
-app.use('/api/upload', requireAdmin, uploadRoutes);  // 只有管理员可以上传文件
+app.use('/api/upload', uploadRoutes);  // 上传路由，具体权限在各接口内部控制
 app.use('/api/tags', tagsRoutes);  // 🏷️ 新增：标签路由（读取需要登录，管理需要管理员权限）
 app.use('/api/ai', aiRoutes);
 app.use('/api/learning', requireAuth, learningRoutes);  // 所有登录用户可以学习

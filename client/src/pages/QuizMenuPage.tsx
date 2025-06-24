@@ -42,7 +42,7 @@ interface MaterialsResponse {
 
 const QuizMenuPage: React.FC = () => {
   const navigate = useNavigate();
-  const { currentModel } = useAIModel();
+  const { currentModel, checkForUpdates, settingsVersion } = useAIModel(); // 🔧 增加AI设置同步功能
   const { startGeneration, stopGeneration, isGenerationLocked, generationState } = useGeneration();
   
   const [materials, setMaterials] = useState<{ files: Material[]; tags: Material[] }>({ files: [], tags: [] });
@@ -484,6 +484,43 @@ const QuizMenuPage: React.FC = () => {
       </div>
     );
   };
+
+  // 🔧 新增：监听AI设置变更事件
+  useEffect(() => {
+    const handleAISettingsUpdate = (event: CustomEvent) => {
+      console.log('🤖 QuizMenu页面：检测到AI设置更新', {
+        newSettings: event.detail.settings,
+        version: event.detail.version,
+        timestamp: event.detail.timestamp
+      });
+      
+      // 显示设置更新提示
+      message.info({
+        content: '⚙️ AI模型设置已更新，题目生成可能受影响',
+        duration: 4
+      });
+    };
+
+    window.addEventListener('ai-settings-updated', handleAISettingsUpdate as EventListener);
+    return () => window.removeEventListener('ai-settings-updated', handleAISettingsUpdate as EventListener);
+  }, []);
+
+  // 🔧 新增：页面加载时检查AI设置更新
+  useEffect(() => {
+    const initializeAISettings = async () => {
+      try {
+        console.log('🔄 QuizMenu页面加载，检查AI设置更新...');
+        const hasUpdates = await checkForUpdates();
+        if (hasUpdates) {
+          console.log('✅ QuizMenu页面：AI设置已更新');
+        }
+      } catch (error) {
+        console.error('❌ QuizMenu页面检查AI设置失败:', error);
+      }
+    };
+    
+    initializeAISettings();
+  }, []); // 只在组件加载时执行一次
 
   return (
     <div>      <Tabs

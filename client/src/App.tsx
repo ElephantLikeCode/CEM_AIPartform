@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { Layout, Menu, Button, Dropdown, message, Spin, Avatar, Drawer } from 'antd';
 import { DatabaseOutlined, BookOutlined, QuestionCircleOutlined, UserOutlined, LogoutOutlined, SafetyOutlined, BulbOutlined, MenuOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons';
+import { useTranslation } from 'react-i18next';
 import axios from 'axios';
 import './App.css';
 import './styles/theme.css';
@@ -17,8 +18,10 @@ import QAPage from './pages/QAPage';
 import AdminLearningProgressPage from './pages/AdminLearningProgressPage';
 import AdminFileVisibilityPage from './pages/AdminFileVisibilityPage';
 import AdminTagFileOrderPage from './pages/AdminTagFileOrderPage';
+import LanguageSwitcher from './components/LanguageSwitcher';
 import { GenerationProvider, useGeneration } from './contexts/GenerationContext';
 import { AIModelProvider } from './contexts/AIModelContext';
+import DatabaseUserPage from './pages/DatabaseUserPage';
 
 const { Header, Content, Sider } = Layout;
 
@@ -36,6 +39,7 @@ interface MenuItem {
 }
 
 const AppContent: React.FC = () => {
+  const { t } = useTranslation();
   const [apiStatus, setApiStatus] = useState<string>('Checking...');
   const [userLoggedIn, setUserLoggedIn] = useState<boolean>(false);
   const [userRole, setUserRole] = useState<string>('user');
@@ -109,20 +113,18 @@ const AppContent: React.FC = () => {
       const response = await axios.get('/api/auth/check-login', { withCredentials: true });
       setUserLoggedIn(response.data.loggedIn);
       setUserRole(response.data.role || 'user');
-      
-      // 如果用户未登录且不在公共页面，重定向到登录页面并显示提示
+        // 如果用户未登录且不在公共页面，重定向到登录页面并显示提示
       if (!response.data.loggedIn && !isPublicPage) {
-        message.warning('请先登录后再访问');
+        message.warning(t('auth.sessionExpired'));
         navigate('/login', { replace: true });
       }
     } catch (error) {
       console.error('检查登录状态失败:', error);
       setUserLoggedIn(false);
       setUserRole('user');
-      
-      // 网络或服务器错误时，重定向到登录页面
+        // 网络或服务器错误时，重定向到登录页面
       if (!isPublicPage) {
-        message.error('无法验证登录状态，请重新登录');
+        message.error(t('auth.sessionExpired'));
         navigate('/login', { replace: true });
       }
     } finally {
@@ -134,9 +136,8 @@ const AppContent: React.FC = () => {
   const handleLogout = async () => {
     setLoggingOut(true);
     try {
-      const response = await axios.post('/api/auth/logout', {}, { withCredentials: true });
-      if (response.data.success) {
-        message.success('👋 登出成功！');
+      const response = await axios.post('/api/auth/logout', {}, { withCredentials: true });      if (response.data.success) {
+        message.success(t('auth.logoutSuccess'));
         setUserLoggedIn(false);
         setUserRole('user');
         navigate('/welcome');
@@ -149,13 +150,12 @@ const AppContent: React.FC = () => {
       setLoggingOut(false);
     }
   };
-
   const userMenu = {
     items: [
       {
         key: 'logout',
         icon: <LogoutOutlined />,
-        label: '登出',
+        label: t('common.logout'),
         onClick: handleLogout
       }
     ]
@@ -176,14 +176,13 @@ const AppContent: React.FC = () => {
     
     // 默认选择
     return userRole === 'admin' || userRole === 'sub_admin' ? 'database' : 'learning';
-  };
-  const getMenuItems = (): MenuItem[] => {
+  };  const getMenuItems = (): MenuItem[] => {
     const items: MenuItem[] = [];
     
     // 🔧 新增：生成锁定时阻止导航的函数
     const handleNavigation = (path: string) => {
       if (isGenerationLocked()) {
-        message.warning('题目生成中，无法切换页面，请等待生成完成');
+        message.warning(t('notification.warning'));
         return;
       }
       navigate(path);
@@ -194,15 +193,24 @@ const AppContent: React.FC = () => {
       items.push({
         key: 'database',
         icon: <DatabaseOutlined />,
-        label: '數據庫管理',
-        onClick: () => handleNavigation('/database')
+        label: t('nav.database', '知识库'),
+        onClick: () => navigate('/database')
       });
       
       items.push({
         key: 'users',
         icon: <UserOutlined />,
-        label: '用戶管理',
+        label: t('admin.userManagement'),
         onClick: () => handleNavigation('/users')
+      });
+    }
+    // 普通用户显示只读数据库页面
+    if (userRole === 'user') {
+      items.push({
+        key: 'database',
+        icon: <DatabaseOutlined />,
+        label: t('nav.database', '知识库'),
+        onClick: () => navigate('/database')
       });
     }
     // 仅 admin 可见的管理功能
@@ -210,19 +218,19 @@ const AppContent: React.FC = () => {
       items.push({
         key: 'admin-learning-progress',
         icon: <SafetyOutlined />,
-        label: '学习进度总览',
+        label: t('admin.analytics'),
         onClick: () => handleNavigation('/admin/learning-progress')
       });
       items.push({
         key: 'admin-file-visibility',
         icon: <SafetyOutlined />,
-        label: '文件可见性管理',
+        label: t('admin.fileManagement'),
         onClick: () => handleNavigation('/admin/file-visibility')
       });
       items.push({
         key: 'admin-tag-file-order',
         icon: <SafetyOutlined />,
-        label: '标签文件排序',
+        label: t('admin.systemSettings'),
         onClick: () => handleNavigation('/admin/tag-file-order')
       });
     }
@@ -231,19 +239,18 @@ const AppContent: React.FC = () => {
       {
         key: 'learning',
         icon: <BookOutlined />,
-        label: '學習介面',
+        label: t('nav.learning'),
         onClick: () => handleNavigation('/learning')
-      },
-      {
+      },      {
         key: 'qa',
         icon: <BulbOutlined />,
-        label: 'AI問答',
+        label: t('menu.aiQA'),
         onClick: () => handleNavigation('/qa')
       },
       {
         key: 'quiz',
         icon: <QuestionCircleOutlined />,
-        label: '測驗評估',
+        label: t('nav.quiz'),
         onClick: () => handleNavigation('/quiz-menu')
       }
     );
@@ -253,8 +260,7 @@ const AppContent: React.FC = () => {
   // 如果在欢迎页面或登录页面，显示简单布局
   if (isPublicPage) {
     return (
-      <div style={{ margin: 0, padding: 0 }}>
-        <Routes>
+      <div style={{ margin: 0, padding: 0 }}>        <Routes>
           <Route path="/welcome" element={<WelcomePage />} />
           <Route path="/login" element={<LoginPage />} />
         </Routes>
@@ -273,9 +279,8 @@ const AppContent: React.FC = () => {
         minHeight: '100vh',
         background: '#f0f2f5'
       }}>
-        <Spin size="large" />
-        <div style={{ marginTop: '16px', fontSize: '16px', color: '#666' }}>
-          {authChecking ? '正在验证登录状态...' : '正在跳转到登录页面...'}
+        <Spin size="large" />        <div style={{ marginTop: '16px', fontSize: '16px', color: '#666' }}>
+          {authChecking ? t('status.checkingLogin') : t('status.redirectingToLogin')}
         </div>
       </div>
     );
@@ -302,10 +307,9 @@ const AppContent: React.FC = () => {
             src="https://www.cem-macau.com/_nuxt/img/logo.5ab12fa.svg" 
             alt="CEM Logo"
             style={{ height: isMobile ? '32px' : '40px', width: 'auto' }}
-          />
-          {!isMobile && (
+          />          {!isMobile && (
             <span style={{ fontSize: '20px', fontWeight: '600' }}>
-              澳電CEM AI學習平台
+              {t('common.title')}
             </span>
           )}
         </div>
@@ -334,12 +338,20 @@ const AppContent: React.FC = () => {
               display: 'flex',
               alignItems: 'center',
               gap: '6px'
-            }}>
-              <Spin size="small" style={{ color: 'white' }} />
-              {generationState.generationType === 'tag' ? '標籤' : '文檔'}題目生成中...
+            }}>              <Spin size="small" style={{ color: 'white' }} />
+              {generationState.generationType === 'tag' ? t('common.tagQuestions') : t('common.documentQuestions')}
             </div>
           )}          {userLoggedIn && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? '8px' : '12px' }}>              {/* 统一的侧边栏控制按钮 */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? '8px' : '12px' }}>              {/* 语言切换器 */}
+              <LanguageSwitcher 
+                size={isMobile ? 'small' : 'middle'}
+                style={{ 
+                  border: '1px solid rgba(255,255,255,0.3)',
+                  borderRadius: '6px'
+                }}
+              />
+              
+              {/* 统一的侧边栏控制按钮 */}
               <Button 
                 type="text" 
                 icon={
@@ -367,12 +379,11 @@ const AppContent: React.FC = () => {
                   minWidth: isMobile ? '36px' : 'auto'
                 }}                title={
                   isMobile 
-                    ? '打开菜单' 
-                    : (sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏')
+                    ? t('common.settings') 
+                    : (sidebarCollapsed ? t('common.settings') : t('common.settings'))
                 }
               >
-                {!isMobile && (sidebarCollapsed ? '展开' : '收起')}
-              </Button>
+                {!isMobile && (sidebarCollapsed ? t('common.settings') : t('common.close'))}              </Button>
               
               {/* 隐藏用户角色信息
               <div style={{ 
@@ -401,7 +412,7 @@ const AppContent: React.FC = () => {
                     padding: isMobile ? '0 8px' : '0 16px'
                   }}
                 >
-                  {isMobile ? '' : '用戶中心'}
+                  {isMobile ? '' : t('nav.profile')}
                 </Button>
               </Dropdown>
             </div>
@@ -436,9 +447,8 @@ const AppContent: React.FC = () => {
                 style={{ 
                   background: userRole === 'admin' ? '#52c41a' : userRole === 'sub_admin' ? '#fa8c16' : '#1890ff' 
                 }} 
-              />
-              <div style={{ marginTop: '8px', fontSize: '14px', color: '#666' }}>
-                {userRole === 'admin' ? '超级管理員' : userRole === 'sub_admin' ? '二级管理员' : '普通用戶'}
+              />              <div style={{ marginTop: '8px', fontSize: '14px', color: '#666' }}>
+                {userRole === 'admin' ? t('role.admin') : userRole === 'sub_admin' ? t('role.subAdmin') : t('role.user')}
               </div>
             </div>
             <Menu
@@ -477,25 +487,23 @@ const AppContent: React.FC = () => {
                 style={{ 
                   background: userRole === 'admin' ? '#52c41a' : userRole === 'sub_admin' ? '#fa8c16' : '#1890ff' 
                 }} 
-              />              <div>
-                <div className="mobile-drawer-title" style={{ 
+              />              <div>                <div className="mobile-drawer-title" style={{ 
                   fontSize: '16px', 
                   fontWeight: '600',
                   lineHeight: '1.2',
                   textAlign: 'center'
                 }}>
-                  澳電CEM<br />AI學習平臺
+                  <span dangerouslySetInnerHTML={{ __html: t('platform.fullTitle') }} />
                 </div>
                 <div className="mobile-user-role" style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
-                  {userRole === 'admin' ? '超级管理員' : userRole === 'sub_admin' ? '二级管理员' : '普通用戶'}
+                  {userRole === 'admin' ? t('admin.admin') : userRole === 'sub_admin' ? t('admin.teacher') : t('admin.student')}
                 </div>
               </div>
             </div>
-          }
-          placement="left"
+          }          placement="left"
           onClose={() => setSidebarCollapsed(true)}
           open={isMobile && !sidebarCollapsed}
-          bodyStyle={{ padding: 0 }}
+          styles={{ body: { padding: 0 } }}
           width={280}
         >
           <Menu
@@ -553,9 +561,13 @@ const AppContent: React.FC = () => {
               <Route 
                 path="/database" 
                 element={
-                  (userRole === 'admin' || userRole === 'sub_admin') ? (
+                  userRole === 'admin' || userRole === 'sub_admin' ? (
                     <ProtectedRoute>
                       <DatabasePage />
+                    </ProtectedRoute>
+                  ) : userRole === 'user' ? (
+                    <ProtectedRoute>
+                      <DatabaseUserPage />
                     </ProtectedRoute>
                   ) : (
                     <Navigate to="/learning" replace />

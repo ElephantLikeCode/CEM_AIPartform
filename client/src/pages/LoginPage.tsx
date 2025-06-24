@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Input, Button, Form, Typography, message, Tabs, Space, Divider } from 'antd';
+import { Input, Button, Form, Typography, message, Tabs, Space, Divider } from 'antd';
 import { 
-  UserOutlined, 
   LockOutlined, 
   MailOutlined, 
   SafetyOutlined,
@@ -15,10 +14,13 @@ import {
 } from '@ant-design/icons';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
+import LanguageSwitcher from '../components/LanguageSwitcher';
 
 const { Title, Text, Paragraph } = Typography;
 
 const LoginPage: React.FC = () => {
+  const { t } = useTranslation();
   const [loading, setLoading] = useState(false);
   const [sendingCode, setSendingCode] = useState(false);
   const [countdown, setCountdown] = useState(0);
@@ -67,7 +69,7 @@ const LoginPage: React.FC = () => {
           localStorage.setItem('userId', response.data.user.id.toString());
         }
         
-        message.success('🎉 登录成功！欢迎回来');
+        message.success(t('auth.loginSuccess'));
         
         // 根据用户角色导航到合适的页面
         const userRole = response.data.user?.role || 'user';
@@ -77,7 +79,7 @@ const LoginPage: React.FC = () => {
           navigate('/learning');
         }
       } else {
-        throw new Error(response.data.message || '登录失败');
+        throw new Error(response.data.message || t('auth.loginFailed'));
       }
     } catch (error: any) {
       message.error(error.response?.data?.message || error.message);
@@ -91,12 +93,12 @@ const LoginPage: React.FC = () => {
     try {
       const response = await axios.post('/api/auth/register', values);
       if (response.data.success) {
-        message.success('🎉 注册成功！请登录');
+        message.success(t('auth.registerSuccess'));
         setActiveTab('login');
         registerForm.resetFields();
         setCountdown(0);
       } else {
-        throw new Error(response.data.message || '注册失败');
+        throw new Error(response.data.message || t('auth.registerFailed'));
       }
     } catch (error: any) {
       message.error(error.response?.data?.message || error.message);
@@ -108,22 +110,20 @@ const LoginPage: React.FC = () => {
   const handleSendCode = async () => {
     try {
       const email = registerForm.getFieldValue('email');
-      
-      if (!email) {
-        message.error('请先输入邮箱地址');
+        if (!email) {
+        message.error(t('auth.codeInputFirst'));
         return;
       }
 
       if (!validateEmail(email)) {
-        message.error('请输入正确的邮箱格式，如：example@domain.com');
+        message.error(t('auth.emailFormatError'));
         return;
       }
 
       setSendingCode(true);
       
-      const response = await axios.post('/api/auth/send-code', { email });
-      if (response.data.success) {
-        message.success('📧 验证码已发送，请检查您的邮箱');
+      const response = await axios.post('/api/auth/send-code', { email });      if (response.data.success) {
+        message.success(t('auth.codeSent'));
         setCountdown(60);
       } else {
         throw new Error(response.data.message || '发送验证码失败');
@@ -136,11 +136,10 @@ const LoginPage: React.FC = () => {
     }
   };
 
-  const getSendCodeButtonProps = () => {
-    if (sendingCode) {
+  const getSendCodeButtonProps = () => {    if (sendingCode) {
       return {
         disabled: true,
-        children: '发送中...',
+        children: t('auth.sending'),
         loading: true
       };
     }
@@ -154,14 +153,13 @@ const LoginPage: React.FC = () => {
     
     return {
       disabled: false,
-      children: '获取验证码'
+      children: t('auth.getVerificationCode')
     };
   };
-
   const features = [
-    { icon: <ThunderboltOutlined style={{ color: '#1890ff' }} />, text: '智能AI分析' },
-    { icon: <StarOutlined style={{ color: '#52c41a' }} />, text: '个性化学习' },
-    { icon: <CheckCircleOutlined style={{ color: '#722ed1' }} />, text: '专业认证' }
+    { icon: <ThunderboltOutlined style={{ color: '#1890ff' }} />, text: t('auth.aiAnalysis') },
+    { icon: <StarOutlined style={{ color: '#52c41a' }} />, text: t('auth.personalizedLearning') },
+    { icon: <CheckCircleOutlined style={{ color: '#722ed1' }} />, text: t('auth.professionalCertification') }
   ];
   return (
     <div className="login-page-container" style={{
@@ -265,14 +263,13 @@ const LoginPage: React.FC = () => {
             }}>
               🤖
             </div>
-            
-            <Title level={2} style={{ 
+              <Title level={2} style={{ 
               color: 'white', 
               marginBottom: '16px',
               fontSize: '28px',
               fontWeight: 'bold'
             }}>
-              澳電CEM AI學習平台
+              {t('auth.platformTitle')}
             </Title>
             
             <Paragraph style={{ 
@@ -281,7 +278,7 @@ const LoginPage: React.FC = () => {
               lineHeight: '1.6',
               marginBottom: '40px'
             }}>
-              采用最新AI技术，为您提供个性化的学习体验。智能分析文档内容，生成定制化学习路径，让学习更高效、更有趣。
+              {t('auth.platformDescription')}
             </Paragraph>
 
             <Space direction="vertical" size={16}>
@@ -310,23 +307,31 @@ const LoginPage: React.FC = () => {
               ))}
             </Space>          </div>
         </div>
-        )}
-
-        {/* 右侧登录表单 */}
+        )}        {/* 右侧登录表单 */}
         <div className="login-form-panel" style={{
           flex: 1,
           padding: isMobile ? '24px 20px' : '60px 40px',
-          background: 'white'
-        }}>          <div style={{ textAlign: 'center', marginBottom: isMobile ? '24px' : '40px' }}>
-            <Title level={3} style={{ 
+          background: 'white',
+          position: 'relative'
+        }}>
+          
+          {/* 語言切換器 */}
+          <div style={{ 
+            position: 'absolute', 
+            top: '20px', 
+            right: '20px',
+            zIndex: 10 
+          }}>
+            <LanguageSwitcher size="small" />
+          </div><div style={{ textAlign: 'center', marginBottom: isMobile ? '24px' : '40px' }}>            <Title level={3} style={{ 
               color: '#333',
               marginBottom: '8px',
               fontSize: isMobile ? '20px' : '24px'
             }}>
-              {isMobile ? '澳電智能學習平臺' : '欢迎使用'}
+              {isMobile ? t('auth.mobileTitle') : t('auth.welcomeTitle')}
             </Title>
             <Text style={{ color: '#666', fontSize: isMobile ? '13px' : '14px' }}>
-              {isMobile ? '请登录您的账户或创建新账户' : '请登录您的账户或创建新账户'}
+              {t('auth.welcomeSubtitle')}
             </Text>
           </div>          <Tabs 
             activeKey={activeTab} 
@@ -335,13 +340,12 @@ const LoginPage: React.FC = () => {
             size={isMobile ? "middle" : "large"}
             style={{ marginBottom: isMobile ? '16px' : '20px' }}
             className="custom-tabs"
-            items={[
-              {
+            items={[              {
                 key: 'login',
                 label: (
                   <span>
                     <LoginOutlined />
-                    登录
+                    {t('auth.login')}
                   </span>
                 ),
                 children: (
@@ -350,20 +354,19 @@ const LoginPage: React.FC = () => {
                     layout="vertical"
                     onFinish={handleLogin}
                     style={{ marginTop: '20px' }}
-                  >
-                    <Form.Item
+                  >                    <Form.Item
                       name="email"
                       rules={[
-                        { required: true, message: '请输入邮箱' },
+                        { required: true, message: t('auth.emailRequired') },
                         { 
                           pattern: /^[^@\s]+@[^@\s]+\.[^@\s]+$/,
-                          message: '请输入正确的邮箱格式' 
+                          message: t('auth.emailFormat') 
                         }
                       ]}
                     >
                       <Input
                         prefix={<MailOutlined style={{ color: '#1890ff' }} />}
-                        placeholder="邮箱地址"
+                        placeholder={t('auth.emailPlaceholder')}
                         size="large"
                         style={{ borderRadius: '8px' }}
                       />
@@ -371,14 +374,13 @@ const LoginPage: React.FC = () => {
 
                     <Form.Item
                       name="password"
-                      rules={[{ required: true, message: '请输入密码' }]}
-                    >
-                      <Input.Password
+                      rules={[{ required: true, message: t('auth.passwordRequired') }]}
+                    >                      <Input.Password
                         prefix={<LockOutlined style={{ color: '#1890ff' }} />}
-                        placeholder="密码"
+                        placeholder={t('auth.passwordPlaceholder')}
                         size="large"
                         style={{ borderRadius: '8px' }}
-                        iconRender={(visible) => (visible ? <EyeTwoTone /> : <EyeInvisibleOutlined />)}
+                        iconRender={(visible: boolean) => (visible ? <EyeTwoTone /> : <EyeInvisibleOutlined />)}
                       />
                     </Form.Item>
 
@@ -397,21 +399,19 @@ const LoginPage: React.FC = () => {
                           background: 'linear-gradient(45deg, #667eea 0%, #764ba2 100%)',
                           border: 'none',
                           boxShadow: '0 4px 12px rgba(102, 126, 234, 0.4)'
-                        }}
-                        icon={<LoginOutlined />}
+                        }}                        icon={<LoginOutlined />}
                       >
-                        立即登录
+                        {t('auth.loginNow')}
                       </Button>
                     </Form.Item>
                   </Form>
                 )
-              },
-              {
+              },              {
                 key: 'register',
                 label: (
                   <span>
                     <UserAddOutlined />
-                    注册
+                    {t('auth.register')}
                   </span>
                 ),
                 children: (
@@ -421,20 +421,19 @@ const LoginPage: React.FC = () => {
                       layout="vertical"
                       onFinish={handleRegister}
                       style={{ marginTop: '20px' }}
-                    >
-                      <Form.Item
+                    >                      <Form.Item
                         name="email"
                         rules={[
-                          { required: true, message: '请输入邮箱' },
+                          { required: true, message: t('auth.emailRequired') },
                           { 
                             pattern: /^[^@\s]+@[^@\s]+\.[^@\s]+$/,
-                            message: '请输入正确的邮箱格式' 
+                            message: t('auth.emailFormat') 
                           }
                         ]}
                       >
                         <Input
                           prefix={<MailOutlined style={{ color: '#1890ff' }} />}
-                          placeholder="邮箱地址"
+                          placeholder={t('auth.emailPlaceholder')}
                           size="large"
                           style={{ borderRadius: '8px' }}
                         />
@@ -442,11 +441,11 @@ const LoginPage: React.FC = () => {
 
                       <Form.Item
                         name="code"
-                        rules={[{ required: true, message: '请输入验证码' }]}
+                        rules={[{ required: true, message: t('auth.codeRequired') }]}
                       >
                         <Input
                           prefix={<SafetyOutlined style={{ color: '#1890ff' }} />}
-                          placeholder="请输入6位验证码"
+                          placeholder={t('auth.verificationCodePlaceholder')}
                           maxLength={6}
                           size="large"
                           style={{ borderRadius: '8px' }}
@@ -464,21 +463,18 @@ const LoginPage: React.FC = () => {
                             />
                           }
                         />
-                      </Form.Item>
-
-                      <Form.Item
+                      </Form.Item>                      <Form.Item
                         name="password"
                         rules={[
-                          { required: true, message: '请输入密码' },
-                          { min: 6, message: '密码至少6位' }
+                          { required: true, message: t('auth.passwordRequired') },
+                          { min: 6, message: t('auth.passwordMinLength') }
                         ]}
-                      >
-                        <Input.Password
+                      ><Input.Password
                           prefix={<LockOutlined style={{ color: '#1890ff' }} />}
-                          placeholder="密码（至少6位）"
+                          placeholder={t('auth.passwordPlaceholder')}
                           size="large"
                           style={{ borderRadius: '8px' }}
-                          iconRender={(visible) => (visible ? <EyeTwoTone /> : <EyeInvisibleOutlined />)}
+                          iconRender={(visible: boolean) => (visible ? <EyeTwoTone /> : <EyeInvisibleOutlined />)}
                         />
                       </Form.Item>
 
@@ -497,10 +493,9 @@ const LoginPage: React.FC = () => {
                             background: 'linear-gradient(45deg, #52c41a 0%, #73d13d 100%)',
                             border: 'none',
                             boxShadow: '0 4px 12px rgba(82, 196, 26, 0.4)'
-                          }}
-                          icon={<UserAddOutlined />}
+                          }}                          icon={<UserAddOutlined />}
                         >
-                          立即注册
+                          {t('auth.registerNow')}
                         </Button>
                       </Form.Item>
                     </Form>
@@ -515,27 +510,24 @@ const LoginPage: React.FC = () => {
                         borderRadius: '6px',
                         border: '1px solid #e6f4ff'
                       }}>
-                        📧 验证码已发送到您的邮箱，请注意查收
+                        {t('auth.codeSentNotice')}
                       </div>
                     )}
                   </>
                 )
               }
             ]}
-          />
-
-          <Divider style={{ margin: '30px 0', color: '#ccc' }}>
+          />          <Divider style={{ margin: '30px 0', color: '#ccc' }}>
             <Text style={{ color: '#999', fontSize: '12px' }}>
-              安全登录 · 隐私保护
+              {t('auth.secureLogin')}
             </Text>
           </Divider>
 
-          <div style={{ textAlign: 'center' }}>
-            <Text style={{ color: '#999', fontSize: '12px' }}>
-              登录即表示您同意{' '}
-              <a href="#" style={{ color: '#1890ff' }}>服务条款</a>
-              {' '}和{' '}
-              <a href="#" style={{ color: '#1890ff' }}>隐私政策</a>
+          <div style={{ textAlign: 'center' }}>            <Text style={{ color: '#999', fontSize: '12px' }}>
+              {t('auth.agreeTerms')}{' '}
+              <a href="#" style={{ color: '#1890ff' }}>{t('auth.termsAndConditions')}</a>
+              {' '}{t('auth.and')}{' '}
+              <a href="#" style={{ color: '#1890ff' }}>{t('auth.privacyPolicy')}</a>
             </Text>
           </div>
         </div>

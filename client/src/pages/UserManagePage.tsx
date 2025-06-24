@@ -28,6 +28,7 @@ import {
   ReloadOutlined,
   TeamOutlined
 } from '@ant-design/icons';
+import { useTranslation } from 'react-i18next';
 import axios from 'axios';
 
 const { Title, Text } = Typography;
@@ -42,6 +43,7 @@ interface User {
 }
 
 const UserManagePage: React.FC = () => {
+  const { t } = useTranslation();
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
@@ -262,7 +264,7 @@ const UserManagePage: React.FC = () => {
       title: '操作',
       key: 'action',
       width: 200,
-      render: (_, user: User) => (
+      render: (_: any, user: User) => (
         <Space size="small">
           <Tooltip title={user.id === currentUserId ? "不能修改自己的密码" : "修改密码"}>
             <Button

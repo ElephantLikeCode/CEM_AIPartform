@@ -1240,17 +1240,43 @@ router.get('/files/:id', requireAuth, async (req, res) => {
   }
 });
 
-// 文件下载
+// 文件下载接口权限控制
 router.get('/download/:id', requireAuth, async (req, res) => {
   try {
     const fileId = req.params.id;
-    const file = fileDatabase.find(f => f.id === fileId);
+    const userId = req.user.id;
+    const userRole = req.user.role;
     
+    console.log(`📥 [下载请求] 用户 ${userId} (${userRole}) 尝试下载文件: ${fileId}`);
+    
+    const file = fileDatabase.find(f => f.id === fileId);
     if (!file) {
-      return res.status(404).json({
-        success: false,
-        message: '文件不存在'
-      });
+      console.log(`❌ [下载失败] 文件不存在: ${fileId}`);
+      return res.status(404).json({ success: false, message: '文件不存在' });
+    }
+    
+    console.log(`📋 [文件信息] 找到文件: ${file.originalName}`);
+      // 权限控制：非管理员只能下载有权限的文件
+    const isAdmin = userRole === 'admin' || userRole === 'sub_admin';
+    if (!isAdmin) {
+      console.log(`🔍 [权限检查] 普通用户，开始检查权限...`);
+      const visibleFileIds = database.fileVisibility.getVisibleFileIdsForUser(userId);
+      console.log(`🔍 [权限数据] 用户 ${userId} 可见文件IDs:`, visibleFileIds);
+      console.log(`🎯 [权限检查] 请求下载文件ID: ${file.id}`);
+      console.log(`🔍 [类型检查] 用户权限列表中的ID类型:`, visibleFileIds.map(id => typeof id));
+      console.log(`🔍 [类型检查] 请求的文件ID类型:`, typeof file.id);
+      
+      // 确保类型一致的比较
+      const hasPermission = visibleFileIds.some(id => String(id) === String(file.id));
+      
+      if (!hasPermission) {
+        console.log(`❌ [权限拒绝] 用户 ${userId} 无权限下载文件: ${file.id}`);
+        console.log(`📋 [权限详情] 可见文件列表 [${visibleFileIds.join(', ')}] 不包含 ${file.id}`);
+        return res.status(403).json({ success: false, message: '无权限下载该文件' });
+      }
+      console.log(`✅ [权限通过] 用户 ${userId} 有权限下载文件: ${file.id}`);
+    } else {
+      console.log(`✅ [管理员权限] 管理员 ${userId} 可下载所有文件`);
     }
     
     const filePath = file.uploadPath || file.path;
@@ -1667,6 +1693,66 @@ router.post('/set-visibility', requireAdmin, async (req, res) => {
   } catch (error) {
     console.error('设置文件可见性失败:', error);
     res.status(500).json({ success: false, message: '设置失败', error: error.message });
+  }
+});
+
+// 🔧 调试接口：检查用户文件权限详情
+router.get('/debug-permissions/:userId', requireAuth, async (req, res) => {
+  try {
+    const userId = req.params.userId;
+    const isAdmin = req.user.role === 'admin' || req.user.role === 'sub_admin';
+    
+    // 只有管理员或用户本人可以查看权限详情
+    if (!isAdmin && req.user.id !== parseInt(userId)) {
+      return res.status(403).json({ success: false, message: '无权限查看其他用户信息' });
+    }
+    
+    console.log(`🔍 调试用户 ${userId} 的文件权限`);
+    
+    // 获取用户可见的文件IDs
+    const visibleFileIds = database.fileVisibility.getVisibleFileIdsForUser(userId);
+    
+    // 获取文件数据库中的所有文件
+    const { fileDatabase } = require('./upload');
+    
+    // 检查每个文件的权限情况
+    const permissionDetails = fileDatabase.map(file => {
+      const hasPermission = visibleFileIds.some(id => String(id) === String(file.id));
+      return {
+        fileId: file.id,
+        fileName: file.originalName,
+        fileIdType: typeof file.id,
+        hasPermission,
+        visibleInPermissionList: visibleFileIds.includes(file.id),
+        strictEqual: visibleFileIds.includes(file.id),
+        stringEqual: visibleFileIds.some(id => String(id) === String(file.id))
+      };
+    });
+    
+    res.json({
+      success: true,
+      data: {
+        userId: userId,
+        userIdType: typeof userId,
+        visibleFileIds: visibleFileIds,
+        visibleFileIdTypes: visibleFileIds.map(id => typeof id),
+        totalFiles: fileDatabase.length,
+        permissionDetails: permissionDetails,
+        summary: {
+          totalFilesInDb: fileDatabase.length,
+          filesWithPermission: permissionDetails.filter(p => p.hasPermission).length,
+          visibleFileIdsCount: visibleFileIds.length
+        }
+      }
+    });
+    
+  } catch (error) {
+    console.error('调试权限失败:', error);
+    res.status(500).json({
+      success: false,
+      message: '调试权限失败',
+      error: error.message
+    });
   }
 });
 

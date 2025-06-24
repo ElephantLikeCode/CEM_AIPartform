@@ -10,6 +10,7 @@ import {
   ExclamationCircleOutlined, TagsOutlined, SettingOutlined
 } from '@ant-design/icons';
 import axios from 'axios';
+import { useTranslation } from 'react-i18next';
 import { navigateToPage, PAGES } from '../utils/navigation';
 import { useAIModel } from '../contexts/AIModelContext';
 
@@ -28,6 +29,28 @@ interface LearningMaterial {
   keyPoints: number;
   uploadTime: string;
   contentLength?: number;
+  canLearn: boolean;
+  prerequisiteInfo?: {
+    hasPrerequisite: boolean;
+    prerequisiteFile?: {
+      id: string;
+      name: string;
+      order: number;
+    };
+    tagName?: string;
+  };
+  orderInfo?: {
+    tagName: string;
+    currentOrder: number;
+    totalFiles: number;
+    isFirst: boolean;
+    isLast: boolean;
+  };
+  tags?: Array<{
+    id: number;
+    name: string;
+    color: string;
+  }>;
 }
 
 interface StageContent {
@@ -58,6 +81,7 @@ interface ChatMessage {
 }
 
 const LearningPage: React.FC = () => {
+  const { t } = useTranslation();
   const { currentModel, checkForUpdates, settingsVersion } = useAIModel(); // 🤖 获取当前AI模型和同步功能
   
   // 🔧 新增：移动端检测
@@ -135,8 +159,7 @@ const LearningPage: React.FC = () => {
       console.error('❌ 会话验证失败:', error);
     }
   }, [userId]);
-  
-  // 🔄 定期检查设置更新和会话状态
+    // 🔄 定期检查设置更新和会话状态
   useEffect(() => {
     const interval = setInterval(async () => {
       // 检查AI设置更新
@@ -149,7 +172,7 @@ const LearningPage: React.FC = () => {
       if (learning) {
         await validateSession();
       }
-    }, 30000); // 每30秒检查一次
+    }, 15000); // 🔧 减少到15秒检查一次，更及时的同步
     
     return () => clearInterval(interval);
   }, [learning, checkForUpdates, validateSession]);
@@ -302,7 +325,6 @@ const LearningPage: React.FC = () => {
     }
   };
   // Tag learning function has been removed
-
   const startLearning = async () => {
     if (!selectedMaterial) {
       message.warning('請選擇學習材料');
@@ -322,7 +344,8 @@ const LearningPage: React.FC = () => {
         userId,
         fileId: selectedMaterial
       });
-        setTotalStages(response.data.totalStages);
+      
+      setTotalStages(response.data.totalStages);
       setCurrentStage(response.data.currentStage);
       setLearning(true);
       // Learning mode is always 'file' now
@@ -332,9 +355,30 @@ const LearningPage: React.FC = () => {
     } catch (error: any) {
       console.error('❌ 开始学习失败:', error);
       
-      if (error.response?.status === 404) {
+      if (error.response?.status === 403 && error.response?.data?.code === 'PREREQUISITE_NOT_MET') {
+        // 前置条件未满足
+        Modal.confirm({
+          title: '学习顺序提醒',
+          icon: <ExclamationCircleOutlined />,
+          content: (
+            <div>
+              <p>{error.response.data.message}</p>
+              <p style={{ marginTop: 12, color: '#666' }}>
+                💡 提示：每个标签下的文件必须按顺序学习，完成前一个文件的学习并通过测试（分数≥80）后才能学习下一个文件。
+              </p>
+            </div>
+          ),
+          okText: '我知道了',
+          cancelText: '查看学习进度',
+          centered: isMobile,
+          width: isMobile ? '90vw' : 480,
+          onCancel: () => {
+            // 可以添加查看学习进度的逻辑
+            message.info('请先完成前置文件的学习');
+          }
+        });
+      } else if (error.response?.status === 404) {
         message.error('学习材料不存在或已被删除，请重新选择');
-        //setSelectedMaterial('');
       } else {
         message.error(error.response?.data?.message || '開始學習失敗');
       }
@@ -609,8 +653,7 @@ ${progress?.fileName ? `- 学习文件：${progress.fileName}` : ''}
     } catch (error) {
       console.error('更新進度失敗:', error);
     }
-  };
-  const proceedToQuiz = () => {
+  };  const proceedToQuiz = () => {
     console.log('🔍 检查测试所需数据:', {
       progress: progress ? {
         fileName: progress.fileName,
@@ -633,17 +676,29 @@ ${progress?.fileName ? `- 学习文件：${progress.fileName}` : ''}
 
       console.log('🔄 准备跳转到文件测试页面...', { fileId, fileName });
 
+      // 🔧 新增：添加回调参数，用于处理测试结果
       const params = new URLSearchParams({
         userId: userId.toString(),
         fileId: fileId,
         fileName: fileName,
-        count: '8'
+        count: '8',
+        callback: 'learning' // 标记来源为学习页面
       });
       
       const quizUrl = `${PAGES.QUIZ}?${params.toString()}`;
       console.log('🔗 文件测试页面URL:', quizUrl);
       
       try {
+        // 🔧 在跳转前保存当前状态到 localStorage，以便测试页面使用
+        localStorage.setItem('learningContext', JSON.stringify({
+          userId,
+          fileId,
+          fileName,
+          currentStage,
+          totalStages,
+          learningCompleted: currentStage === totalStages
+        }));
+        
         navigateToPage(quizUrl);
       } catch (error) {
         console.error('页面跳转失败:', error);
@@ -705,6 +760,30 @@ ${progress?.fileName ? `- 学习文件：${progress.fileName}` : ''}
     });
   }, [currentModel, settingsVersion]);
 
+  // 🔧 新增：监听全局AI设置更新事件
+  useEffect(() => {
+    const handleAISettingsUpdate = (event: CustomEvent) => {
+      console.log('🔄 学习页面收到AI设置更新事件:', event.detail);
+      
+      // 可以在这里添加特定的响应逻辑
+      const { settings, version } = event.detail;
+      console.log('📱 学习页面同步AI设置:', {
+        newModel: settings.currentModel,
+        newVersion: version,
+        currentModel,
+        currentVersion: settingsVersion
+      });
+      
+      // 如果有正在进行的AI对话，可以考虑重新初始化
+      if (chatMessages.length > 0) {
+        console.log('💬 检测到AI设置变化，当前有对话历史');
+      }
+    };
+
+    window.addEventListener('ai-settings-updated', handleAISettingsUpdate as EventListener);
+    return () => window.removeEventListener('ai-settings-updated', handleAISettingsUpdate as EventListener);
+  }, [currentModel, settingsVersion, chatMessages.length]);
+
   // 🔄 页面加载时强制检查AI设置更新
   useEffect(() => {
     const initializeAISettings = async () => {
@@ -723,6 +802,89 @@ ${progress?.fileName ? `- 学习文件：${progress.fileName}` : ''}
     
     initializeAISettings();
   }, []); // 只在组件加载时执行一次
+
+  // 🔧 新增：处理测试完成后的结果
+  const handleTestCompletion = useCallback(async (testScore: number, fileId: string) => {
+    try {
+      console.log('🏆 处理测试完成结果:', { testScore, fileId, userId });
+      
+      const response = await axios.post('/api/learning/complete-with-test', {
+        userId,
+        fileId,
+        testScore
+      });
+
+      if (response.data.success) {
+        if (response.data.data.passed) {
+          // 测试通过，学习进度已保存
+          message.success({
+            content: response.data.message,
+            duration: 5
+          });
+          
+          // 清理本地学习状态
+          setLearning(false);
+          setProgress(null);
+          setCurrentStage(1);
+          setTotalStages(0);
+          setStageContent(null);
+          setSelectedMaterial('');
+          setChatMessages([]);
+          
+          // 重新加载学习材料（可能解锁了新的文件）
+          await loadMaterials();
+          
+        } else {
+          // 测试未通过
+          message.warning({
+            content: response.data.message,
+            duration: 6
+          });
+          
+          // 保持学习状态，允许重新学习或重新测试
+        }
+      }
+    } catch (error: any) {
+      console.error('❌ 处理测试结果失败:', error);
+      message.error('处理测试结果失败: ' + (error.response?.data?.message || error.message));
+    }
+  }, [userId]);
+
+  // 🔧 新增：监听来自测试页面的消息
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data.type === 'QUIZ_COMPLETED') {
+        const { score, fileId } = event.data;
+        console.log('📨 收到测试完成消息:', { score, fileId });
+        handleTestCompletion(score, fileId);
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, [handleTestCompletion]);
+
+  // 🔧 新增：页面加载时检查是否有测试结果需要处理
+  useEffect(() => {
+    const checkTestResult = () => {
+      const testResult = localStorage.getItem('testResult');
+      if (testResult) {
+        try {
+          const result = JSON.parse(testResult);
+          if (result.source === 'learning' && result.score !== undefined && result.fileId) {
+            console.log('🔍 发现测试结果需要处理:', result);
+            handleTestCompletion(result.score, result.fileId);
+            localStorage.removeItem('testResult'); // 清理已处理的结果
+          }
+        } catch (error) {
+          console.error('解析测试结果失败:', error);
+          localStorage.removeItem('testResult');
+        }
+      }
+    };
+
+    checkTestResult();
+  }, [handleTestCompletion]);
 
   if (!learning) {    return (
       <div className="page-container learning-page-container" style={{ maxWidth: 1200, margin: '0 auto' }}>{/* 移除AI模型设置区域 - 仅管理员可在数据库页面调整 */}
@@ -795,16 +957,42 @@ ${progress?.fileName ? `- 学习文件：${progress.fileName}` : ''}
                   marginBottom: 32,
                   maxWidth: 800,
                   margin: '0 auto 32px auto'
-                }}>\
-                  <Title level={4} className="learning-section-title" style={{ marginBottom: 24, textAlign: 'left' }}>
+                }}>                  <Title level={4} className="learning-section-title" style={{ marginBottom: 16, textAlign: 'left' }}>
                     📚 選擇學習教材：({materials.length}个可用)
                   </Title>
                   
-                  {/* 🔧 新增：显示材料加载状态 */}
-                  <div style={{ marginBottom: 16, padding: 8, background: '#f0f9ff', borderRadius: 4 }}>
-                    <Text type="secondary" style={{ fontSize: 12 }}>
-                      💡 找到 {materials.length} 个可用的学习材料
-                    </Text>
+                  {/* 学习顺序说明 */}
+                  {materials.some(m => m.orderInfo || m.prerequisiteInfo?.hasPrerequisite) && (
+                    <Alert
+                      type="info"
+                      message="学习顺序说明"
+                      description="某些文档有学习顺序要求。您需要按标签中的顺序完成学习，前一个文档的测试分数达到80分后才能学习下一个文档。"
+                      style={{ marginBottom: 16 }}
+                      showIcon
+                    />
+                  )}
+                    {/* 🔧 新增：显示材料加载状态和学习进度概览 */}
+                  <div style={{ marginBottom: 16, padding: 12, background: '#f0f9ff', borderRadius: 6, border: '1px solid #e6f7ff' }}>
+                    <div style={{ marginBottom: 8 }}>
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        💡 找到 {materials.length} 个学习材料
+                      </Text>
+                    </div>
+                    <div>
+                      <Space wrap size={4}>
+                        <Tag color="green">
+                          可学习: {materials.filter(m => m.canLearn).length}
+                        </Tag>
+                        <Tag color="orange">
+                          需前置: {materials.filter(m => !m.canLearn).length}
+                        </Tag>
+                        {materials.some(m => m.orderInfo) && (
+                          <Tag color="blue">
+                            有序列: {materials.filter(m => m.orderInfo).length}
+                          </Tag>
+                        )}
+                      </Space>
+                    </div>
                   </div>
                   
                   <div style={{ marginBottom: 16 }}>
@@ -820,14 +1008,36 @@ ${progress?.fileName ? `- 学习文件：${progress.fileName}` : ''}
                       filterOption={(input, option) =>
                         option?.children?.toString().toLowerCase().includes(input.toLowerCase()) ?? false
                       }
-                    >
-                      {materials.map(material => (                        <Option key={material.id} value={material.id}>                          <div style={{ padding: '8px 0' }} className="learning-material-option learning-material-container">
-                            <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }} className="learning-material-title">
+                    >                      {materials.map(material => (                        <Option 
+                          key={material.id} 
+                          value={material.id}
+                          disabled={!material.canLearn}
+                        >                          <div style={{ padding: '8px 0' }} className="learning-material-option learning-material-container">
+                            <div style={{ 
+                              fontWeight: 600, 
+                              fontSize: 14, 
+                              marginBottom: 4,
+                              color: material.canLearn ? '#000' : '#999'
+                            }} className="learning-material-title">
                               📖 {material.name}
+                              {!material.canLearn && (                                <Tag color="orange" style={{ marginLeft: 8, fontSize: 10 }}>
+                                  需要前置
+                                </Tag>
+                              )}
                             </div>
-                            <div style={{ fontSize: 12, color: '#666' }}>
+                            <div style={{ fontSize: 12, color: material.canLearn ? '#666' : '#999' }}>
                               {material.stages}个阶段 • {material.contentLength ? `${Math.round(material.contentLength/1000)}k字符` : '内容已准备'}
+                              {material.orderInfo && (
+                                <span style={{ marginLeft: 8 }}>
+                                  • {material.orderInfo.tagName}: 第{material.orderInfo.currentOrder}/{material.orderInfo.totalFiles}个
+                                </span>
+                              )}
                             </div>
+                            {material.prerequisiteInfo?.hasPrerequisite && (
+                              <div style={{ fontSize: 11, color: '#fa8c16', marginTop: 2 }}>
+                                ⚠️ 需要先完成：{material.prerequisiteInfo.prerequisiteFile?.name}
+                              </div>
+                            )}
                           </div>
                         </Option>
                       ))}
@@ -851,8 +1061,7 @@ ${progress?.fileName ? `- 学习文件：${progress.fileName}` : ''}
                                 📖 {material.name}
                               </Title>
                             </div>
-                            
-                            <div style={{ marginBottom: 16 }}>
+                              <div style={{ marginBottom: 16 }}>
                               <Space wrap size={4}>
                                 <Tag color="blue">
                                   {material.stages}个学习阶段
@@ -860,11 +1069,55 @@ ${progress?.fileName ? `- 学习文件：${progress.fileName}` : ''}
                                 <Tag color="purple">
                                   {material.contentLength ? `${Math.round(material.contentLength/1000)}k字符` : '内容就绪'}
                                 </Tag>
-                                <Tag color="green">
-                                  可开始学习
+                                <Tag color={material.canLearn ? "green" : "orange"}>
+                                  {material.canLearn ? "可开始学习" : "需要前置"}
                                 </Tag>
+                                {material.orderInfo && (
+                                  <Tag color="cyan">
+                                    {material.orderInfo.tagName}: {material.orderInfo.currentOrder}/{material.orderInfo.totalFiles}
+                                  </Tag>
+                                )}
                               </Space>
                             </div>
+                            
+                            {/* 前置要求提示 */}
+                            {material.prerequisiteInfo?.hasPrerequisite && (
+                              <Alert
+                                type="warning"
+                                message="前置学习要求"
+                                description={
+                                  <div>
+                                    <Text>在开始学习此文档前，您需要先完成：</Text>
+                                    <br />
+                                    <Text strong style={{ color: '#fa8c16' }}>
+                                      📖 {material.prerequisiteInfo.prerequisiteFile?.name}
+                                    </Text>
+                                    <br />
+                                    <Text type="secondary" style={{ fontSize: 12 }}>
+                                      (标签 "{material.prerequisiteInfo.tagName}" 中的第{material.prerequisiteInfo.prerequisiteFile?.order}个文档)
+                                    </Text>
+                                  </div>
+                                }
+                                style={{ marginBottom: 16 }}
+                                showIcon
+                              />
+                            )}
+                            
+                            {material.orderInfo && !material.prerequisiteInfo?.hasPrerequisite && (
+                              <Alert
+                                type="success"
+                                message="学习进度"
+                                description={
+                                  <Text>
+                                    您正在学习标签 "{material.orderInfo.tagName}" 中的第{material.orderInfo.currentOrder}个文档
+                                    {material.orderInfo.isFirst && " (第一个文档)"}
+                                    {material.orderInfo.isLast && " (最后一个文档)"}
+                                  </Text>
+                                }
+                                style={{ marginBottom: 16 }}
+                                showIcon
+                              />
+                            )}
                             
                             <div style={{ marginBottom: 20 }}>
                               <Text style={{ fontSize: 15, lineHeight: 1.6, color: '#555' }}>
@@ -887,36 +1140,51 @@ ${progress?.fileName ? `- 学习文件：${progress.fileName}` : ''}
                         ) : null;
                       })()}
                     </div>
-                  )}
-
-                  <div style={{ textAlign: 'center', marginTop: 24 }}>
-                    <Button 
-                      type="primary" 
-                      size="large" 
-                      icon={<PlayCircleOutlined />}
-                      onClick={startLearning}
-                      disabled={!selectedMaterial}
-                      className="start-learning-button"
-                      style={{ 
-                        height: 48, 
-                        paddingLeft: 32, 
-                        paddingRight: 32,
-                        fontSize: 16,
-                        fontWeight: 600,
-                        border: 'none'
-                      }}
-                    >
-                      🚀 開始文檔學習
-                    </Button>
-                    
-                    {!selectedMaterial && (
-                      <div style={{ marginTop: 12 }}>
-                        <Text type="secondary" style={{ fontSize: 13 }}>
-                          請先選擇一個學習教材
-                        </Text>
-                      </div>
-                    )}
-                  </div>                </div>
+                  )}                  <div style={{ textAlign: 'center', marginTop: 24 }}>
+                    {(() => {
+                      const selectedMat = materials.find(m => m.id === selectedMaterial);
+                      const canStartLearning = selectedMaterial && selectedMat?.canLearn;
+                      
+                      return (
+                        <>
+                          <Button 
+                            type="primary" 
+                            size="large" 
+                            icon={<PlayCircleOutlined />}
+                            onClick={startLearning}
+                            disabled={!canStartLearning}
+                            className="start-learning-button"
+                            style={{ 
+                              height: 48, 
+                              paddingLeft: 32, 
+                              paddingRight: 32,
+                              fontSize: 16,
+                              fontWeight: 600,
+                              border: 'none'
+                            }}
+                          >
+                            🚀 開始文檔學習
+                          </Button>
+                          
+                          {!selectedMaterial && (
+                            <div style={{ marginTop: 12 }}>
+                              <Text type="secondary" style={{ fontSize: 13 }}>
+                                請先選擇一個學習教材
+                              </Text>
+                            </div>
+                          )}
+                          
+                          {selectedMaterial && !selectedMat?.canLearn && (
+                            <div style={{ marginTop: 12 }}>
+                              <Text type="warning" style={{ fontSize: 13 }}>
+                                ⚠️ 请先完成前置文档的学习
+                              </Text>
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
+                  </div></div>
               )}
             </div>
         </Card>
@@ -975,8 +1243,7 @@ ${progress?.fileName ? `- 学习文件：${progress.fileName}` : ''}
           </Space>
         }
         style={{ marginBottom: 24, background: 'rgba(255, 255, 255, 0.85)', backdropFilter: 'blur(10px)', border: 'none', borderRadius: '12px' }}
-      >
-        {/* 可點擊的進度條 */}
+      >        {/* 學習進度條 - 手机端简化显示 */}
         <div style={{ marginBottom: 20 }}>
           <div style={{ 
             display: 'flex', 
@@ -985,30 +1252,39 @@ ${progress?.fileName ? `- 学习文件：${progress.fileName}` : ''}
             marginBottom: 16 
           }}>
             <Text strong style={{ fontSize: 14 }}>
-              📊 學習進度 (點擊步驟跳轉)
+              📊 學習進度{!isMobile && ' (點擊步驟跳轉)'}
             </Text>
             <Text type="secondary" style={{ fontSize: 12 }}>
               進度：{Math.round((currentStage / totalStages) * 100)}%
             </Text>
           </div>
           
-          <Steps 
-            current={currentStage - 1} 
-            size="small" 
-            type="navigation"
-            style={{ marginBottom: 16 }}
-          >
-            {Array.from({ length: totalStages }, (_, i) => (
-              <Step 
-                key={i + 1} 
-                title={`階段 ${i + 1}`}
-                icon={i + 1 <= currentStage ? <CheckOutlined /> : undefined}
-                style={{ cursor: 'pointer' }}
-                onClick={() => goToStage(i + 1)}
-                status={i + 1 === currentStage ? 'process' : (i + 1 < currentStage ? 'finish' : 'wait')}
-              />
-            ))}
-          </Steps>
+          {/* 手机端只显示进度条，桌面端显示步骤导航 */}
+          {!isMobile ? (
+            <Steps 
+              current={currentStage - 1} 
+              size="small" 
+              type="navigation"
+              style={{ marginBottom: 16 }}
+            >
+              {Array.from({ length: totalStages }, (_, i) => (
+                <Step 
+                  key={i + 1} 
+                  title={`階段 ${i + 1}`}
+                  icon={i + 1 <= currentStage ? <CheckOutlined /> : undefined}
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => goToStage(i + 1)}
+                  status={i + 1 === currentStage ? 'process' : (i + 1 < currentStage ? 'finish' : 'wait')}
+                />
+              ))}
+            </Steps>
+          ) : (
+            <div style={{ marginBottom: 16 }}>
+              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+                當前階段：第 {currentStage} 階段 / 共 {totalStages} 階段
+              </Text>
+            </div>
+          )}
         </div>
         
         <div style={{ marginBottom: 20 }}>

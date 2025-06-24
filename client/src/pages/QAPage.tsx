@@ -48,7 +48,7 @@ interface KnowledgeSource {
 }
 
 const QAPage: React.FC = () => {
-  const { currentModel } = useAIModel();
+  const { currentModel, checkForUpdates, settingsVersion } = useAIModel(); // 🔧 增加AI设置同步功能
   // 动态获取当前登录用户ID
   const userId = Number(localStorage.getItem('userId'));
 

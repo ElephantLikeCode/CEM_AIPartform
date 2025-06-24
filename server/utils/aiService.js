@@ -1601,13 +1601,25 @@ ${sentences.slice(6).length > 0 ? '\n【补充说明】\n' + sentences.slice(6).
     const isComprehensiveTest = stage === 1 && content && content.length > 1000;
     const testType = isComprehensiveTest ? '综合评估测试' : `第${stage}阶段测试`;
     
+    // 🔧 新增：详细日志AI模型选择
+    console.log(`🤖 题目生成详细参数:`, {
+      传入模型: selectedModel,
+      本地默认模型: this.model,
+      测试类型: testType,
+      阶段: stage,
+      难度: difficulty,
+      题目数量: questionCount,
+      内容长度: content?.length || 0,
+      时间戳: new Date().toISOString()
+    });
+    
     // 🤖 检查是否使用DeepSeek
     if (selectedModel === 'deepseek') {
-      console.log(`🤖 使用DeepSeek API生成题目 - ${testType}`);
+      console.log(`🚀 使用DeepSeek API生成题目 - ${testType}`);
       return await this._generateQuestionsWithDeepSeek(content, stage, difficulty, questionCount, testType);
     }
     
-    console.log(`🤖 使用本地模型 ${this.model} 生成${questionCount}道${testType}题目...`);
+    console.log(`🏠 使用本地模型 ${this.model} 生成${questionCount}道${testType}题目...`);
     
     // 🔧 使用队列化请求
     return await this.queuedAIRequest(async () => {
@@ -2306,13 +2318,15 @@ ${content.substring(0, 6000)}
     
     return { questions };
   }
-
   // 🤖 新增：问答功能 - 基于上下文生成回答
   async generateAnswer(question, context) {
     try {
-      console.log('🤖 开始生成问答回答...');
+      console.log('🏠 使用本地AI模型生成问答回答...');
+      console.log(`当前使用模型: ${this.model}`);
       console.log(`问题: ${question.substring(0, 100)}${question.length > 100 ? '...' : ''}`);
       console.log(`上下文长度: ${context.length}字符`);
+      console.log(`AI服务状态: ${this.isConnected ? '已连接' : '未连接'}`);
+      console.log(`Base URL: ${this.baseURL}`);
 
       const prompt = `你是一个智能助手，请基于以下提供的知识库内容，准确回答用户的问题。
 
