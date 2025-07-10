@@ -49,18 +49,11 @@ router.post('/', requireAuth, async (req, res) => {
       aiModel = 'local' 
     } = req.body;
     
-    // 🔒 权限控制：检查用户是否有权限使用指定的AI模型
-    const userRole = req.user.role;
-    const isAdmin = userRole === 'admin' || userRole === 'sub_admin';
-    let finalAiModel = aiModel;
-    
-    if (!isAdmin && aiModel === 'deepseek') {
-      console.log(`⚠️ 用户${userId}(${userRole})尝试使用DeepSeek模型，已转换为本地模型`);
-      finalAiModel = 'local'; // 普通用户强制使用本地模型
-    }
-      console.log('🆕 创建新对话:', {
-      userId, title, knowledgeMode, knowledgeSourceId, aiModel: finalAiModel
-    });
+    // 确保模型设置遵循全局配置，而不是在创建时被覆盖
+    const globalSettings = require('../routes/system').getCurrentAISettings();
+    const finalAiModel = globalSettings.currentModel;
+
+    console.log(`🆕 创建新对话:`, { userId, title, knowledgeMode, knowledgeSourceId, aiModel });
     
     // 验证参数
     if (!userId || !title) {
@@ -216,53 +209,14 @@ router.post('/:sessionId/messages', requireAuth, async (req, res) => {
       // 生成AI回答
     let aiResponse = '';
     let tokensUsed = 0;
-      // 🔒 权限控制：实时获取当前AI设置，而不是使用对话创建时的设置
-    const userRole = req.user.role;
-    const isAdmin = userRole === 'admin' || userRole === 'sub_admin';
-      // 🔧 新增：从system.js获取当前AI设置，增强日志
-    let currentAISettings;
-    try {
-      const systemModule = require('./system.js');
-      // 尝试获取当前AI设置（需要修改system.js导出设置）
-      currentAISettings = global.currentAISettings || { 
-        isAIEnabled: true, 
-        currentModel: 'local' 
-      };
-      
-      console.log(`🔍 对话接口获取AI设置:`, {
-        全局设置: global.currentAISettings,
-        当前使用: currentAISettings,
-        设置来源: global.currentAISettings ? '全局变量' : '默认值',
-        时间戳: new Date().toISOString()
-      });
-    } catch (error) {
-      console.warn('⚠️ 无法获取当前AI设置，使用默认设置:', error.message);
-      currentAISettings = { isAIEnabled: true, currentModel: 'local' };
-    }
     
-    // 根据用户权限和当前设置确定实际使用的模型
-    let actualModel = currentAISettings.currentModel;
-    if (!isAdmin) {
-      actualModel = 'local'; // 普通用户强制使用本地模型
-      console.log(`⚠️ 用户${userId}(${userRole})，强制使用本地模型`);
-    } else {
-      console.log(`🤖 管理员${userId}使用当前设置的模型: ${actualModel}`);
-    }
-    
-    console.log(`💬 AI对话详细信息:`, {
-      用户ID: userId,
-      用户权限: userRole,
-      是否管理员: isAdmin,
-      全局模型设置: currentAISettings.currentModel,
-      AI总开关: currentAISettings.isAIEnabled,
-      实际使用模型: actualModel,
-      消息长度: message.length,
-      知识库模式: knowledgeMode
-    });
+    // � 使用全局AI设置，确保与创建对话时的设置一致
+    const globalSettings = require('../routes/system').getCurrentAISettings();
+    const actualModel = globalSettings.currentModel;
     
     try {
-      if (actualModel === 'deepseek' && isAdmin) {
-        // 管理员使用DeepSeek API
+      if (actualModel === 'deepseek') {
+        // 使用DeepSeek API
         if (!deepseekService.isDeepSeekEnabled()) {
           throw new Error('DeepSeek功能已禁用');
         }

@@ -11,6 +11,7 @@ import {
 } from '@ant-design/icons';
 import axios from 'axios';
 import { useTranslation } from 'react-i18next';
+import { useLocation } from 'react-router-dom'; // 🏆 新增：用于接收导航状态
 import { navigateToPage, PAGES } from '../utils/navigation';
 import { useAIModel } from '../contexts/AIModelContext';
 
@@ -83,10 +84,16 @@ interface ChatMessage {
 const LearningPage: React.FC = () => {
   const { t } = useTranslation();
   const { currentModel, checkForUpdates, settingsVersion } = useAIModel(); // 🤖 获取当前AI模型和同步功能
+  const location = useLocation(); // 🏆 新增：获取导航状态
   
   // 🔧 新增：移动端检测
   const [isMobile, setIsMobile] = useState<boolean>(false);
   
+  // 🔧 新增：学习序列进度状态
+  const [isProgressModalVisible, setIsProgressModalVisible] = useState(false);
+  const [sequenceProgress, setSequenceProgress] = useState<any>(null);
+  const [isSequenceLoading, setIsSequenceLoading] = useState(false);
+
   useEffect(() => {
     const checkMobile = () => {
       setIsMobile(window.innerWidth < 768);
@@ -159,7 +166,8 @@ const LearningPage: React.FC = () => {
       console.error('❌ 会话验证失败:', error);
     }
   }, [userId]);
-    // 🔄 定期检查设置更新和会话状态
+  
+  // 🔄 定期检查设置更新和会话状态
   useEffect(() => {
     const interval = setInterval(async () => {
       // 检查AI设置更新
@@ -172,7 +180,7 @@ const LearningPage: React.FC = () => {
       if (learning) {
         await validateSession();
       }
-    }, 15000); // 🔧 减少到15秒检查一次，更及时的同步
+    }, 30000); // 每30秒检查一次
     
     return () => clearInterval(interval);
   }, [learning, checkForUpdates, validateSession]);
@@ -252,6 +260,15 @@ const LearningPage: React.FC = () => {
         const materialsData = response.data.data || [];
           // Materials data processing
         
+        // 🔧 添加原始数据调试
+        console.log('🔍 服务器返回的原始材料数据:', materialsData.map((m: any) => ({
+          id: m.id,
+          name: m.name,
+          canLearn: m.canLearn,
+          prerequisiteInfo: m.prerequisiteInfo,
+          orderInfo: m.orderInfo
+        })));
+        
         // 🔧 详细验证每个材料的数据结构
         const processedMaterials = materialsData.map((material: any, index: number) => {          // Processing material ${index + 1}
           
@@ -267,12 +284,24 @@ const LearningPage: React.FC = () => {
             canLearn: material.canLearn !== false,
             learningReady: material.learningReady !== false,
             contentLength: material.contentLength || 0,
-            hasContent: material.hasContent || false
+            hasContent: material.hasContent || false,
+            // 🔧 修复：保留服务器返回的权限和顺序信息
+            prerequisiteInfo: material.prerequisiteInfo || null,
+            orderInfo: material.orderInfo || null,
+            tags: material.tags || []
           };
         });
           // Processed materials list ready
         
         setMaterials(processedMaterials);
+        // 🔧 添加调试信息
+        console.log('🔍 材料学习权限调试:', processedMaterials.map((m: LearningMaterial) => ({
+          name: m.name,
+          id: m.id,
+          canLearn: m.canLearn,
+          hasPrerequisite: m.prerequisiteInfo?.hasPrerequisite,
+          orderInfo: m.orderInfo
+        })));
         // Learning materials loaded successfully
         
         if (processedMaterials.length === 0) {
@@ -660,7 +689,8 @@ ${progress?.fileName ? `- 学习文件：${progress.fileName}` : ''}
         fileId: progress.fileId,
         learningType: progress.learningType
       } : null,
-      selectedMaterial
+      selectedMaterial,
+      currentModel // 🤖 记录当前AI模型
     });
 
     // Only support file-based testing
@@ -674,15 +704,16 @@ ${progress?.fileName ? `- 学习文件：${progress.fileName}` : ''}
         return;
       }
 
-      console.log('🔄 准备跳转到文件测试页面...', { fileId, fileName });
+      console.log('🔄 准备跳转到文件测试页面...', { fileId, fileName, currentModel });
 
-      // 🔧 新增：添加回调参数，用于处理测试结果
+      // 🔧 新增：添加回调参数和AI模型参数，用于处理测试结果
       const params = new URLSearchParams({
         userId: userId.toString(),
         fileId: fileId,
         fileName: fileName,
         count: '8',
-        callback: 'learning' // 标记来源为学习页面
+        callback: 'learning', // 标记来源为学习页面
+        model: currentModel || 'local' // 🤖 传递当前选择的AI模型
       });
       
       const quizUrl = `${PAGES.QUIZ}?${params.toString()}`;
@@ -696,7 +727,8 @@ ${progress?.fileName ? `- 学习文件：${progress.fileName}` : ''}
           fileName,
           currentStage,
           totalStages,
-          learningCompleted: currentStage === totalStages
+          learningCompleted: currentStage === totalStages,
+          selectedModel: currentModel || 'local' // 🤖 保存选择的AI模型
         }));
         
         navigateToPage(quizUrl);
@@ -759,30 +791,6 @@ ${progress?.fileName ? `- 学习文件：${progress.fileName}` : ''}
       timestamp: new Date().toISOString()
     });
   }, [currentModel, settingsVersion]);
-
-  // 🔧 新增：监听全局AI设置更新事件
-  useEffect(() => {
-    const handleAISettingsUpdate = (event: CustomEvent) => {
-      console.log('🔄 学习页面收到AI设置更新事件:', event.detail);
-      
-      // 可以在这里添加特定的响应逻辑
-      const { settings, version } = event.detail;
-      console.log('📱 学习页面同步AI设置:', {
-        newModel: settings.currentModel,
-        newVersion: version,
-        currentModel,
-        currentVersion: settingsVersion
-      });
-      
-      // 如果有正在进行的AI对话，可以考虑重新初始化
-      if (chatMessages.length > 0) {
-        console.log('💬 检测到AI设置变化，当前有对话历史');
-      }
-    };
-
-    window.addEventListener('ai-settings-updated', handleAISettingsUpdate as EventListener);
-    return () => window.removeEventListener('ai-settings-updated', handleAISettingsUpdate as EventListener);
-  }, [currentModel, settingsVersion, chatMessages.length]);
 
   // 🔄 页面加载时强制检查AI设置更新
   useEffect(() => {
@@ -886,6 +894,56 @@ ${progress?.fileName ? `- 学习文件：${progress.fileName}` : ''}
     checkTestResult();
   }, [handleTestCompletion]);
 
+  // 🏆 新增：处理从测试页面传递的推荐文件
+  useEffect(() => {
+    const navigationState = location.state as any;
+    
+    if (navigationState?.fromQuiz && navigationState?.recommendedFileId) {
+      console.log('🎯 从测试页面接收到推荐文件:', navigationState.recommendedFileId);
+      
+      // 等待材料加载完成后自动选择推荐的文件
+      const selectRecommendedFile = () => {
+        const recommendedFile = materials.find(m => m.id === navigationState.recommendedFileId);
+        
+        if (recommendedFile) {
+          console.log('✅ 找到推荐文件，自动开始学习:', recommendedFile.name);
+          
+          // 显示推荐提示
+          message.info(`🚀 继续学习推荐的文件："${recommendedFile.name}"`);
+            // 自动开始学习这个文件
+          setTimeout(() => {
+            setSelectedMaterial(recommendedFile.id);
+            // 需要等待selectedMaterial状态更新后再调用startLearning
+            setTimeout(() => {
+              startLearning();
+            }, 100);
+          }, 1000);
+        } else {
+          console.log('⚠️ 未找到推荐文件，显示材料选择界面');
+          message.warning('推荐的学习文件暂时不可用，请选择其他文件继续学习');
+        }
+      };
+      
+      // 如果材料已加载，立即选择；否则等待加载完成
+      if (materials.length > 0) {
+        selectRecommendedFile();
+      } else {
+        // 设置一个标记，在材料加载完成后选择
+        const checkMaterials = setInterval(() => {
+          if (materials.length > 0) {
+            clearInterval(checkMaterials);
+            selectRecommendedFile();
+          }
+        }, 500);
+        
+        // 5秒后清理检查，避免无限等待
+        setTimeout(() => {
+          clearInterval(checkMaterials);
+        }, 5000);
+      }
+    }
+  }, [location.state, materials]);
+
   if (!learning) {    return (
       <div className="page-container learning-page-container" style={{ maxWidth: 1200, margin: '0 auto' }}>{/* 移除AI模型设置区域 - 仅管理员可在数据库页面调整 */}
         
@@ -984,7 +1042,7 @@ ${progress?.fileName ? `- 学习文件：${progress.fileName}` : ''}
                           可学习: {materials.filter(m => m.canLearn).length}
                         </Tag>
                         <Tag color="orange">
-                          需前置: {materials.filter(m => !m.canLearn).length}
+                          需前置: {materials.filter(m => m.prerequisiteInfo?.hasPrerequisite).length}
                         </Tag>
                         {materials.some(m => m.orderInfo) && (
                           <Tag color="blue">
@@ -995,89 +1053,112 @@ ${progress?.fileName ? `- 学习文件：${progress.fileName}` : ''}
                     </div>
                   </div>
                   
-                  <div style={{ marginBottom: 16 }}>
-                    <Select
-                      style={{ width: '100%', textAlign: 'left' }}
-                      placeholder="請選擇要學習的教材"
-                      value={selectedMaterial}
-                      onChange={setSelectedMaterial}
-                      loading={materialsLoading}
-                      size="large"
-                      showSearch
-                      optionFilterProp="children"
-                      filterOption={(input, option) =>
-                        option?.children?.toString().toLowerCase().includes(input.toLowerCase()) ?? false
-                      }
-                    >                      {materials.map(material => (                        <Option 
-                          key={material.id} 
-                          value={material.id}
-                          disabled={!material.canLearn}
-                        >                          <div style={{ padding: '8px 0' }} className="learning-material-option learning-material-container">
-                            <div style={{ 
-                              fontWeight: 600, 
-                              fontSize: 14, 
-                              marginBottom: 4,
-                              color: material.canLearn ? '#000' : '#999'
-                            }} className="learning-material-title">
-                              📖 {material.name}
-                              {!material.canLearn && (                                <Tag color="orange" style={{ marginLeft: 8, fontSize: 10 }}>
-                                  需要前置
-                                </Tag>
-                              )}
-                            </div>
-                            <div style={{ fontSize: 12, color: material.canLearn ? '#666' : '#999' }}>
-                              {material.stages}个阶段 • {material.contentLength ? `${Math.round(material.contentLength/1000)}k字符` : '内容已准备'}
-                              {material.orderInfo && (
-                                <span style={{ marginLeft: 8 }}>
-                                  • {material.orderInfo.tagName}: 第{material.orderInfo.currentOrder}/{material.orderInfo.totalFiles}个
-                                </span>
-                              )}
-                            </div>
-                            {material.prerequisiteInfo?.hasPrerequisite && (
-                              <div style={{ fontSize: 11, color: '#fa8c16', marginTop: 2 }}>
-                                ⚠️ 需要先完成：{material.prerequisiteInfo.prerequisiteFile?.name}
+                  {/* 选择器 - 只在没有选择材料时显示 */}
+                  {!selectedMaterial && (
+                    <div style={{ marginBottom: 16 }}>
+                      <Select
+                        style={{ width: '100%', textAlign: 'left' }}
+                        placeholder="請選擇要學習的教材"
+                        value={selectedMaterial}
+                        onChange={setSelectedMaterial}
+                        loading={materialsLoading}
+                        size="large"
+                        showSearch
+                        optionFilterProp="children"
+                        filterOption={(input, option) =>
+                          option?.children?.toString().toLowerCase().includes(input.toLowerCase()) ?? false
+                        }
+                      >                        {materials.map(material => (                          <Option 
+                            key={material.id} 
+                            value={material.id}
+                            disabled={!material.canLearn}
+                          >                            <div style={{ padding: '8px 0' }} className="learning-material-option learning-material-container">
+                              <div style={{ 
+                                fontWeight: 600, 
+                                fontSize: 14, 
+                                marginBottom: 4,
+                                color: material.canLearn ? '#000' : '#999'
+                              }} className="learning-material-title">
+                                📖 {material.name}
+                                {!material.canLearn && (                                  <Tag color="orange" style={{ marginLeft: 8, fontSize: 10 }}>
+                                    需要前置
+                                  </Tag>
+                                )}
                               </div>
-                            )}
-                          </div>
-                        </Option>
-                      ))}
-                    </Select>
-                  </div>
+                              <div style={{ fontSize: 12, color: material.canLearn ? '#666' : '#999' }}>
+                                {material.stages}个阶段 • {material.contentLength ? `${Math.round(material.contentLength/1000)}k字符` : '内容已准备'}
+                                {material.orderInfo && (
+                                  <span style={{ marginLeft: 8 }}>
+                                    • {material.orderInfo.tagName}: 第{material.orderInfo.currentOrder}/{material.orderInfo.totalFiles}个
+                                  </span>
+                                )}
+                              </div>
+                              {material.prerequisiteInfo?.hasPrerequisite && (
+                                <div style={{ fontSize: 11, color: '#fa8c16', marginTop: 2 }}>
+                                  ⚠️ 需要先完成：{material.prerequisiteInfo.prerequisiteFile?.name}
+                                </div>
+                              )}
+                            </div>
+                          </Option>
+                        ))}
+                      </Select>
+                    </div>
+                  )}
 
                   {selectedMaterial && (
-                    <div style={{ marginTop: 16 }}>
+                    <div style={{ marginTop: 24 }}>
                       {(() => {
                         const material = materials.find(m => m.id === selectedMaterial);
-                        return material ? (                          <Card 
+                        return material ? (
+                          <Card 
                             size="default" 
                             className="learning-material-container"
                             style={{ 
                               textAlign: 'left', 
-                              background: '#f8f9fa',
-                              border: '1px solid #e8f4f8'
+                              background: 'linear-gradient(135deg, #f8fcff 0%, #f0f9ff 100%)',
+                              border: '2px solid #e6f7ff',
+                              borderRadius: '12px',
+                              boxShadow: '0 4px 12px rgba(24, 144, 255, 0.1)'
                             }}
-                          ><div style={{ marginBottom: 16 }}>
-                              <Title level={3} style={{ margin: 0, color: '#1890ff' }} className="learning-material-title">
-                                📖 {material.name}
-                              </Title>
-                            </div>
-                              <div style={{ marginBottom: 16 }}>
-                              <Space wrap size={4}>
-                                <Tag color="blue">
-                                  {material.stages}个学习阶段
-                                </Tag>
-                                <Tag color="purple">
-                                  {material.contentLength ? `${Math.round(material.contentLength/1000)}k字符` : '内容就绪'}
-                                </Tag>
-                                <Tag color={material.canLearn ? "green" : "orange"}>
-                                  {material.canLearn ? "可开始学习" : "需要前置"}
-                                </Tag>
-                                {material.orderInfo && (
-                                  <Tag color="cyan">
-                                    {material.orderInfo.tagName}: {material.orderInfo.currentOrder}/{material.orderInfo.totalFiles}
+                          >
+                            {/* 标题和更换选择按钮 */}
+                            <div style={{ 
+                              display: 'flex', 
+                              justifyContent: 'space-between', 
+                              alignItems: 'flex-start',
+                              marginBottom: 16 
+                            }}>
+                              <div style={{ flex: 1 }}>
+                                <Title level={3} style={{ margin: 0, color: '#1890ff', marginBottom: 8 }} className="learning-material-title">
+                                  📖 {material.name}
+                                </Title>
+                                <Space wrap size={6}>
+                                  <Tag color="blue" style={{ borderRadius: '8px' }}>
+                                    {material.stages}个学习阶段
                                   </Tag>
-                                )}
-                              </Space>
+                                  <Tag color="purple" style={{ borderRadius: '8px' }}>
+                                    {material.contentLength ? `${Math.round(material.contentLength/1000)}k字符` : '内容就绪'}
+                                  </Tag>
+                                  <Tag color={material.canLearn ? "green" : "orange"} style={{ borderRadius: '8px' }}>
+                                    {material.canLearn ? "✅ 可开始学习" : "⚠️ 需要前置"}
+                                  </Tag>
+                                  {material.orderInfo && (
+                                    <Tag color="cyan" style={{ borderRadius: '8px' }}>
+                                      {material.orderInfo.tagName}: {material.orderInfo.currentOrder}/{material.orderInfo.totalFiles}
+                                    </Tag>
+                                  )}
+                                </Space>
+                              </div>
+                              <Button 
+                                size="small" 
+                                onClick={() => setSelectedMaterial('')}
+                                style={{ 
+                                  marginLeft: 16,
+                                  borderRadius: '6px'
+                                }}
+                              >
+                                🔄 重新选择
+                              </Button>
                             </div>
                             
                             {/* 前置要求提示 */}
@@ -1098,7 +1179,7 @@ ${progress?.fileName ? `- 学习文件：${progress.fileName}` : ''}
                                     </Text>
                                   </div>
                                 }
-                                style={{ marginBottom: 16 }}
+                                style={{ marginBottom: 16, borderRadius: '8px' }}
                                 showIcon
                               />
                             )}
@@ -1114,25 +1195,36 @@ ${progress?.fileName ? `- 学习文件：${progress.fileName}` : ''}
                                     {material.orderInfo.isLast && " (最后一个文档)"}
                                   </Text>
                                 }
-                                style={{ marginBottom: 16 }}
+                                style={{ marginBottom: 16, borderRadius: '8px' }}
                                 showIcon
                               />
                             )}
                             
-                            <div style={{ marginBottom: 20 }}>
+                            {/* 文档摘要 */}
+                            <div style={{ 
+                              background: 'rgba(255, 255, 255, 0.8)', 
+                              padding: 16, 
+                              borderRadius: 8,
+                              marginBottom: 16,
+                              border: '1px solid #f0f0f0'
+                            }}>
+                              <Text strong style={{ fontSize: 14, color: '#666', display: 'block', marginBottom: 8 }}>
+                                📋 文档概述
+                              </Text>
                               <Text style={{ fontSize: 15, lineHeight: 1.6, color: '#555' }}>
                                 {material.summary}
                               </Text>
                             </div>
                             
+                            {/* 学习提示 */}
                             <div style={{ 
-                              background: '#fff', 
+                              background: 'rgba(255, 255, 255, 0.9)', 
                               padding: 16, 
-                              borderRadius: 6,
+                              borderRadius: 8,
                               border: '1px solid #e0e0e0'
                             }}>
-                              <Text type="secondary" style={{ fontSize: 13 }}>
-                                💡 學習提示：系統將為您生成個性化的學習路徑，您可以按階段逐步學習，
+                              <Text type="secondary" style={{ fontSize: 13, lineHeight: 1.5 }}>
+                                💡 <strong>學習提示：</strong>系統將為您生成個性化的學習路徑，您可以按階段逐步學習，
                                 隨時向AI助手提問，獲得即時的學習指導和答疑服務。
                               </Text>
                             </div>
@@ -1140,13 +1232,24 @@ ${progress?.fileName ? `- 学习文件：${progress.fileName}` : ''}
                         ) : null;
                       })()}
                     </div>
-                  )}                  <div style={{ textAlign: 'center', marginTop: 24 }}>
+                  )}                  {/* 开始学习按钮区域 */}
+                  <div style={{ textAlign: 'center', marginTop: selectedMaterial ? 20 : 24 }}>
                     {(() => {
                       const selectedMat = materials.find(m => m.id === selectedMaterial);
                       const canStartLearning = selectedMaterial && selectedMat?.canLearn;
                       
+                      if (!selectedMaterial) {
+                        return (
+                          <div>
+                            <Text type="secondary" style={{ fontSize: 14, display: 'block', marginBottom: 8 }}>
+                              👆 請先從上方選擇器中選擇一個學習教材
+                            </Text>
+                          </div>
+                        );
+                      }
+                      
                       return (
-                        <>
+                        <div>
                           <Button 
                             type="primary" 
                             size="large" 
@@ -1155,33 +1258,32 @@ ${progress?.fileName ? `- 学习文件：${progress.fileName}` : ''}
                             disabled={!canStartLearning}
                             className="start-learning-button"
                             style={{ 
-                              height: 48, 
-                              paddingLeft: 32, 
-                              paddingRight: 32,
+                              height: 50, 
+                              paddingLeft: 40, 
+                              paddingRight: 40,
                               fontSize: 16,
                               fontWeight: 600,
-                              border: 'none'
+                              border: 'none',
+                              borderRadius: '10px',
+                              background: canStartLearning 
+                                ? 'linear-gradient(135deg, #1890ff 0%, #40a9ff 100%)' 
+                                : undefined,
+                              boxShadow: canStartLearning 
+                                ? '0 4px 15px rgba(24, 144, 255, 0.4)' 
+                                : undefined
                             }}
                           >
                             🚀 開始文檔學習
                           </Button>
                           
-                          {!selectedMaterial && (
-                            <div style={{ marginTop: 12 }}>
-                              <Text type="secondary" style={{ fontSize: 13 }}>
-                                請先選擇一個學習教材
-                              </Text>
-                            </div>
-                          )}
-                          
-                          {selectedMaterial && !selectedMat?.canLearn && (
+                          {!canStartLearning && selectedMat && (
                             <div style={{ marginTop: 12 }}>
                               <Text type="warning" style={{ fontSize: 13 }}>
-                                ⚠️ 请先完成前置文档的学习
+                                ⚠️ 请先完成前置文档的学习并通过测试
                               </Text>
                             </div>
                           )}
-                        </>
+                        </div>
                       );
                     })()}
                   </div></div>
@@ -1702,6 +1804,74 @@ ${progress?.fileName ? `- 学习文件：${progress.fileName}` : ''}
             {isMobile ? '' : '發送'}
           </Button>
         </div>
+      </Modal>
+
+      {/* 🔧 新增：学习序列进度弹窗 */}
+      <Modal
+        title={
+          <Space>
+            <TrophyOutlined />
+            {`学习序列进度: ${sequenceProgress?.sequenceName || ''}`}
+          </Space>
+        }
+        visible={isProgressModalVisible}
+        onCancel={() => setIsProgressModalVisible(false)}
+        footer={[
+          <Button key="back" onClick={() => setIsProgressModalVisible(false)}>
+            关闭
+          </Button>,
+        ]}
+        width={isMobile ? '95vw' : 680}
+        centered
+      >
+        {isSequenceLoading ? (
+          <div style={{ textAlign: 'center', padding: '40px 0' }}>
+            <Spin size="large" tip="正在加载进度..." />
+          </div>
+        ) : sequenceProgress ? (
+          <div style={{ maxHeight: '60vh', overflowY: 'auto', padding: '0 12px' }}>
+            <Steps direction="vertical" current={-1} size="small">
+              {sequenceProgress.files.map((file: any) => {
+                let icon: ReactNode;
+                let status: 'wait' | 'process' | 'finish' | 'error' = 'wait';
+                let description: ReactNode;
+
+                if (file.status === 'completed') {
+                  icon = <CheckOutlined />;
+                  status = 'finish';
+                  description = (
+                    <Space>
+                      <Tag color="green">已完成</Tag>
+                      {file.progress?.score !== null && (
+                        <Text strong>分数: {file.progress.score}</Text>
+                      )}
+                    </Space>
+                  );
+                } else if (file.status === 'next') {
+                  icon = <PlayCircleOutlined style={{ color: '#1890ff' }} />;
+                  status = 'process';
+                  description = <Tag color="blue">下一个学习</Tag>;
+                } else { // locked
+                  icon = <ClockCircleOutlined />;
+                  status = 'wait';
+                  description = <Tag>已锁定</Tag>;
+                }
+
+                return (
+                  <Step
+                    key={file.id}
+                    status={status}
+                    title={<Text style={status === 'process' ? { fontWeight: 'bold' } : {}}>{file.name}</Text>}
+                    icon={icon}
+                    description={description}
+                  />
+                );
+              })}
+            </Steps>
+          </div>
+        ) : (
+          <Empty description="无法加载学习进度详情" style={{ padding: '40px 0' }} />
+        )}
       </Modal>
     </div>
   );

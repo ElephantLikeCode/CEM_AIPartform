@@ -309,40 +309,17 @@ router.post('/generate-tag', async (req, res) => {
         retryable: true
       });
     }
-    console.log('✅ AI服务可用');    console.log('📚 开始生成基于标签的测试题目...');
-      // 🔧 新增：获取当前AI设置，增强日志
-    const userRole = req.user?.role || 'user';
-    const isAdmin = userRole === 'admin' || userRole === 'sub_admin';
-    let currentModel = 'local'; // 默认本地模型
+    console.log('✅ AI服务可用');
+
+    console.log('📚 开始生成基于标签的测试题目...');
     
     try {
-      // 获取当前AI设置
-      const currentAISettings = global.currentAISettings || { currentModel: 'local' };
-      currentModel = isAdmin ? currentAISettings.currentModel : 'local';
-      
-      console.log(`🤖 标签Quiz生成详细信息:`, {
-        用户ID: userId,
-        用户权限: userRole,
-        是否管理员: isAdmin,
-        全局模型设置: currentAISettings.currentModel,
-        AI总开关: currentAISettings.isAIEnabled,
-        实际使用模型: currentModel,
-        题目数量: count,
-        难度: difficulty,
-        全局设置对象: global.currentAISettings
-      });
-    } catch (error) {
-      console.warn('⚠️ 获取AI设置失败，使用默认本地模型:', error.message);
-    }
-    
-    try {
-      // 🔧 修复：直接使用generateQuestions方法，并传递当前AI设置
+      // 🔧 修复：直接使用generateQuestions方法而不是generateTagQuestions
       const questionsResult = await aiService.generateQuestions(
         contentForTest,
         1, // 综合测试阶段
         difficulty,
-        parseInt(count),
-        currentModel // 🔧 新增：传递当前AI模型设置
+        parseInt(count)
       );
 
       console.log('🔍 标签AI生成结果:', {
@@ -569,40 +546,17 @@ router.post('/generate', async (req, res) => {
         retryable: true
       });
     }
-    console.log('✅ AI服务可用');    console.log('📚 开始生成基于文件的测试题目...');
-      // 🔧 新增：获取当前AI设置，增强日志
-    const userRole = req.user?.role || 'user';
-    const isAdmin = userRole === 'admin' || userRole === 'sub_admin';
-    let currentModel = 'local'; // 默认本地模型
+    console.log('✅ AI服务可用');
+
+    console.log('📚 开始生成基于文件的测试题目...');
     
     try {
-      // 获取当前AI设置
-      const currentAISettings = global.currentAISettings || { currentModel: 'local' };
-      currentModel = isAdmin ? currentAISettings.currentModel : 'local';
-      
-      console.log(`🤖 文件Quiz生成详细信息:`, {
-        用户ID: userId,
-        用户权限: userRole,
-        是否管理员: isAdmin,
-        全局模型设置: currentAISettings.currentModel,
-        AI总开关: currentAISettings.isAIEnabled,
-        实际使用模型: currentModel,
-        文件ID: fileId,
-        题目数量: count,
-        难度: difficulty,
-        全局设置对象: global.currentAISettings
-      });
-    } catch (error) {
-      console.warn('⚠️ 获取AI设置失败，使用默认本地模型:', error.message);
-    }
-      try {
-      // 使用文件内容生成题目，并传递当前AI设置
+      // 使用文件内容生成题目
       const questionsResult = await aiService.generateQuestions(
         file.content,
         1, // 单文件测试使用第1阶段
         difficulty,
-        parseInt(count),
-        currentModel // 🔧 新增：传递当前AI模型设置
+        parseInt(count)
       );
 
       console.log('🔍 文件AI生成结果:', {

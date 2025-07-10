@@ -384,14 +384,13 @@ ${content.substring(0, 5000)}
       throw error;
     }
   }
+
   // 🤖 新增：问答功能 - 基于上下文生成回答
   async generateAnswer(question, context) {
     try {
-      console.log('🚀 使用DeepSeek API生成问答回答...');
+      console.log('🤖 使用DeepSeek生成问答回答...');
       console.log(`问题: ${question.substring(0, 100)}${question.length > 100 ? '...' : ''}`);
       console.log(`上下文长度: ${context.length}字符`);
-      console.log(`DeepSeek API状态: ${this.isDeepSeekEnabled() ? '已启用' : '未启用'}`);
-      console.log(`API Key状态: ${this.apiKey ? '已配置' : '未配置'}`);
 
       if (!this.isDeepSeekEnabled()) {
         throw new Error('DeepSeek服务未启用');

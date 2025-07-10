@@ -91,12 +91,12 @@ class VectorService {
     
     return chunks;
   }
-
   // 使用Ollama的嵌入模型生成向量
   async generateEmbedding(text) {
     try {
       const { Ollama } = require('ollama');
-      const ollama = new Ollama({ host: 'http://127.0.0.1:11434' });
+      const ollamaHost = process.env.OLLAMA_HOST || 'http://127.0.0.1:11434';
+      const ollama = new Ollama({ host: ollamaHost });
       
       // 使用专门的嵌入模型
       const response = await ollama.embeddings({

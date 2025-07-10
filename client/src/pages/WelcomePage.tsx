@@ -100,7 +100,7 @@ const WelcomePage: React.FC = () => {
           
           <img
             src="https://www.cem-macau.com/_nuxt/img/logo.5ab12fa.svg"
-            alt="STGC3000 Logo"
+            alt="澳电CEM Logo"
             style={{ 
               height: isMobile ? 90 : 120,
               marginBottom: isMobile ? 16 : 16,

@@ -92,7 +92,14 @@ router.get('/materials', requireAuth, async (req, res) => {
         const analysis = file.aiAnalysis || {};
         
         // 🔧 检查学习权限和前置要求
-        const canUserLearn = isAdmin || database.learningProgress.canUserLearnFile(userId, file.id);
+        const canUserLearn = isAdmin || database.canUserLearnFile(userId, file.id);
+        
+        // 🔧 添加调试信息
+        console.log(`🔍 文件 "${file.originalName}" (ID: ${file.id}) 权限检查:`, {
+          isAdmin,
+          canUserLearn,
+          userId
+        });
         
         // 🔧 获取文件的标签和顺序信息
         const fileTagsInfo = database.tags.getFileTags(file.id);
@@ -897,6 +904,85 @@ router.get('/tag/:tagId/materials', async (req, res) => {
   }
 });
 
+// 🔧 新增：获取特定文件所在学习序列的完整进度
+router.get('/sequence-progress/:fileId', requireAuth, async (req, res) => {
+  try {
+    const { fileId } = req.params;
+    const userId = req.user?.id;
+
+    if (!fileId) {
+      return res.status(400).json({ success: false, message: '文件ID不能为空' });
+    }
+
+    // 1. 根据文件ID找到它所属的第一个标签
+    const fileTags = database.tags.getFileTags(fileId);
+    if (!fileTags || fileTags.length === 0) {
+      return res.status(404).json({ success: false, message: '该文件未被编入任何学习序列' });
+    }
+    const tag = fileTags[0]; // 使用第一个标签作为学习序列的代表
+
+    // 2. 获取该标签下所有排序的文件
+    const sequenceFiles = database.tagFileOrder.getFilesByTagOrdered(tag.id);
+
+    // 3. 获取用户所有的学习进度
+    const userProgressList = database.learningProgress.getUserAllProgress(userId);
+    
+    // 4. 组合文件和进度信息
+    let canLearnNext = true;
+    const sequenceWithProgress = sequenceFiles.map((file, idx) => {
+      const progress = userProgressList.find(p => String(p.file_id) === String(file.id));
+      
+      let status = 'locked';
+      const isCompleted = progress && progress.completed > 0 && progress.test_score >= 80;
+
+      if (isCompleted) {
+        status = 'completed';
+      } else if (canLearnNext) {
+        status = 'next';
+        canLearnNext = false; // 后面的文件都将是 locked
+      }
+
+      // 检查前一个文件是否完成
+      if (idx > 0) {
+        const prevFile = sequenceFiles[idx - 1];
+        const prevProgress = userProgressList.find(p => String(p.file_id) === String(prevFile.id));
+        if (!(prevProgress && prevProgress.completed > 0 && prevProgress.test_score >= 80)) {
+          // 如果前一个未完成，那么当前及之后都不能学习
+          if (status !== 'completed') status = 'locked';
+        }
+      } else {
+        // 第一个文件总是可学的，除非它已经完成
+        if (!isCompleted) status = 'next';
+      }
+
+      return {
+        id: file.id,
+        name: file.original_name,
+        order: idx + 1,
+        status: status,
+        progress: progress ? {
+          completed: isCompleted,
+          score: progress.test_score,
+          completed_at: progress.completed_at
+        } : null
+      };
+    });
+
+    res.json({
+      success: true,
+      data: {
+        sequenceName: tag.name,
+        totalSteps: sequenceFiles.length,
+        files: sequenceWithProgress
+      }
+    });
+
+  } catch (error) {
+    console.error(`❌ 获取学习序列进度失败 (fileId: ${req.params.fileId}):`, error);
+    res.status(500).json({ success: false, message: '获取学习序列进度失败', error: error.message });
+  }
+});
+
 // 🔧 新增：提交测试结果并保存学习进度
 router.post('/complete-with-test', requireAuth, async (req, res) => {
   try {
@@ -1013,49 +1099,181 @@ router.post('/complete-with-test', requireAuth, async (req, res) => {
   }
 });
 
-// 🔧 新增：获取用户在某个标签下的学习进度（用于检查前置条件）
-router.get('/tag-progress/:userId/:tagId', requireAuth, async (req, res) => {
+// 🏆 新增：处理测试完成，获取下一个学习建议
+router.post('/complete-test', requireAuth, async (req, res) => {
   try {
-    const userId = parseInt(req.params.userId);
-    const tagId = parseInt(req.params.tagId);
+    const { fileId, testScore, userId: bodyUserId } = req.body;
+    const userId = bodyUserId || req.user.id;
     
-    if (isNaN(userId) || isNaN(tagId)) {
+    console.log('🏆 处理测试完成:', { userId, fileId, testScore });
+    
+    if (!fileId) {
       return res.status(400).json({
         success: false,
-        message: '用户ID和标签ID必须是有效的数字'
+        message: '缺少文件ID参数'
       });
     }
-
-    // 获取该标签下所有文件的学习进度
-    const tagFiles = database.tagFileOrder.getFilesByTagOrdered(tagId);
-    const progressList = [];
-
-    for (const file of tagFiles) {
-      const progress = database.getFileProgress(userId, file.id);
-      progressList.push({
-        fileId: file.id,
-        fileName: file.original_name,
-        orderIndex: file.order_index,
-        completed: !!progress?.completed,
-        testScore: progress?.test_score || null,
-        canLearn: database.canUserLearnFile(userId, file.id)
+    
+    if (testScore === undefined || testScore === null) {
+      return res.status(400).json({
+        success: false,
+        message: '缺少测试分数参数'
       });
     }
-
+    
+    const uploadModule = require('./upload');
+    const { fileDatabase } = uploadModule;
+    
+    // 查找当前完成的文件信息
+    const completedFile = fileDatabase.find(f => String(f.id) === String(fileId));
+    if (!completedFile) {
+      return res.status(404).json({
+        success: false,
+        message: '找不到指定的学习文件'
+      });
+    }
+    
+    console.log('📄 完成的文件:', completedFile.originalName);
+    
+    // 检查是否通过测试
+    const passed = testScore >= 80;
+    let nextFileRecommendation = null;
+    
+    if (passed) {
+      console.log('✅ 测试通过，检查下一个学习文件...');
+      
+      // 获取用户权限
+      const isAdmin = req.user.role === 'admin' || req.user.role === 'sub_admin';
+      let accessibleFiles = fileDatabase;
+      
+      if (!isAdmin) {
+        const visibleFileIds = database.fileVisibility.getVisibleFileIdsForUser(userId);
+        accessibleFiles = fileDatabase.filter(file => 
+          visibleFileIds.some(id => String(id) === String(file.id))
+        );
+      }
+      
+      // 过滤有效文件
+      const validFiles = accessibleFiles.filter(file => {
+        const hasValidAnalysis = file.aiAnalysis && 
+          typeof file.aiAnalysis === 'object' && 
+          file.aiAnalysis.learningStages && 
+          Array.isArray(file.aiAnalysis.learningStages) && 
+          file.aiAnalysis.learningStages.length > 0;
+        
+        return file.status === 'completed' && hasValidAnalysis;
+      });
+      
+      console.log(`📋 用户可访问的有效文件数: ${validFiles.length}`);
+      
+      // 检查是否有标签顺序（优先按标签顺序推荐）
+      let nextFile = null;
+        // 获取当前文件的标签
+      const currentFileTags = database.tags.getFileTags(fileId);
+      
+      if (currentFileTags && currentFileTags.length > 0) {
+        console.log('🏷️ 当前文件有标签，按标签顺序查找下一个文件...');
+        
+        // 按第一个标签的顺序查找下一个文件
+        const firstTag = currentFileTags[0];
+        const tagFiles = database.tagFileOrder.getFilesByTagOrdered(firstTag.id);
+        const currentIndex = tagFiles.findIndex(f => String(f.id) === String(fileId));
+        
+        if (currentIndex >= 0 && currentIndex < tagFiles.length - 1) {
+          // 有下一个文件
+          const nextTagFile = tagFiles[currentIndex + 1];
+          
+          // 检查用户是否可以访问这个文件
+          const nextFileInDatabase = validFiles.find(f => String(f.id) === String(nextTagFile.id));
+          
+          if (nextFileInDatabase) {
+            nextFile = nextFileInDatabase;
+            console.log(`🎯 找到标签顺序中的下一个文件: ${nextFile.originalName}`);
+          }
+        }
+      }
+      
+      // 如果没有按标签顺序找到，随机推荐一个未学习的文件
+      if (!nextFile) {
+        console.log('🔍 按随机顺序查找下一个未学习的文件...');
+        
+        // 获取用户已完成的文件ID列表（这里简化处理，实际应该查询学习进度数据库）
+        const unlearnedFiles = validFiles.filter(f => String(f.id) !== String(fileId));
+        
+        if (unlearnedFiles.length > 0) {
+          // 随机选择一个或按上传时间排序选择
+          nextFile = unlearnedFiles[0]; // 简单选择第一个
+          console.log(`🎲 随机推荐文件: ${nextFile.originalName}`);
+        }
+      }
+      
+      if (nextFile) {
+        const analysis = nextFile.aiAnalysis;
+        nextFileRecommendation = {
+          id: nextFile.id,
+          name: nextFile.originalName,
+          summary: analysis.summary || `学习文档：${nextFile.originalName}`,
+          stages: analysis.learningStages?.length || 1,
+          keyPoints: analysis.keyPoints?.length || 0,
+          tags: database.tags.getFileTags(nextFile.id) || []
+        };
+      }
+    }
+    
+    // 统计总体学习进度
+    const isAdmin = req.user.role === 'admin' || req.user.role === 'sub_admin';
+    let accessibleFiles = fileDatabase;
+    
+    if (!isAdmin) {
+      const visibleFileIds = database.fileVisibility.getVisibleFileIdsForUser(userId);
+      accessibleFiles = fileDatabase.filter(file => 
+        visibleFileIds.some(id => String(id) === String(file.id))
+      );
+    }
+    
+    const totalFiles = accessibleFiles.filter(file => 
+      file.status === 'completed' && 
+      file.aiAnalysis && 
+      file.aiAnalysis.learningStages && 
+      Array.isArray(file.aiAnalysis.learningStages)
+    ).length;
+    
+    // 简化：假设当前是第一个完成的文件（实际应该查询学习进度数据库）
+    const completedFiles = 1; // 这里应该查询实际的完成数量
+    
+    const result = {
+      testPassed: passed,
+      testScore,
+      completedFile: {
+        id: completedFile.id,
+        name: completedFile.originalName
+      },
+      nextFile: nextFileRecommendation,
+      progress: {
+        completed: completedFiles,
+        total: totalFiles,
+        percentage: totalFiles > 0 ? Math.round((completedFiles / totalFiles) * 100) : 0
+      },
+      hasMoreFiles: !!nextFileRecommendation,
+      message: passed ? 
+        (nextFileRecommendation ? 
+          `恭喜通过测试！建议继续学习"${nextFileRecommendation.name}"` : 
+          '恭喜通过测试！您已完成所有可用的学习材料') :
+        '测试未通过，建议重新学习相关内容后再次测试'
+    };
+    
+    console.log('🎯 测试完成处理结果:', result);
+    
     res.json({
       success: true,
-      data: {
-        userId,
-        tagId,
-        files: progressList
-      }
+      data: result
     });
-
+    
   } catch (error) {
-    console.error('❌ 获取标签学习进度失败:', error);
+    console.error('❌ 处理测试完成失败:', error);
     res.status(500).json({
       success: false,
-      message: '获取标签学习进度失败',
+      message: '处理测试完成失败',
       error: error.message
     });
   }

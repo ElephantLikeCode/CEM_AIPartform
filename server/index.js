@@ -234,13 +234,23 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 // 启动服务器
-app.listen(PORT, async () => {
+const server = app.listen(PORT, async () => {
   console.log(`🚀 STGC3000 AI Learning Platform Server v2.1.2`);
   console.log(`📡 Server running on http://localhost:${PORT}`);
   console.log(`📁 File uploads directory: ${uploadsDir}`);
   console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔇 All PDF font warnings and deprecation warnings are completely filtered`);
   
+  // 🔧 新增：初始化WebSocket服务
+  try {
+    console.log('🔄 初始化WebSocket服务...');
+    const webSocketService = require('./utils/websocketService');
+    webSocketService.initialize(server);
+    console.log('✅ WebSocket服务初始化完成');
+  } catch (error) {
+    console.error('❌ WebSocket服务初始化失败:', error);
+  }
+
   // 🔧 新增：初始化文件数据库
   try {
     console.log('🔄 初始化文件数据库...');

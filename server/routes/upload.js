@@ -235,16 +235,30 @@ const initializeFileDatabase = async () => {
       }
     }
     
-    // 5. 清理孤立的数据库记录
+    // 5. 清理孤立的数据库记录 - 🔧 修复：确保完全清理
     if (orphanedDbRecords.length > 0) {
-      // Cleaning orphaned database records
+      console.log(`🧹 开始清理 ${orphanedDbRecords.length} 个孤立的数据库记录`);
+      
       for (const orphanedRecord of orphanedDbRecords) {
         try {
-          database.tags.removeAllFileTags(orphanedRecord.id);
-          database.files.deleteFile(orphanedRecord.id);
-          // Orphaned record cleaned
+          console.log(`🗑️ 清理孤立记录: ${orphanedRecord.originalName} (ID: ${orphanedRecord.id})`);
+          
+          // 先移除所有文件标签关联
+          try {
+            database.tags.removeAllFileTags(orphanedRecord.id);
+            console.log(`✅ 文件所有标签移除完成`);
+          } catch (tagError) {
+            console.warn(`清理标签关联失败:`, tagError);
+          }
+          
+          // 然后删除文件记录（现在会自动清理所有外键引用）
+          const deleteResult = database.files.deleteFile(orphanedRecord.id);
+          if (deleteResult.changes > 0) {
+            console.log(`✅ 孤立记录清理完成: ${orphanedRecord.originalName}`);
+          }
+          
         } catch (error) {
-          console.error(`清理孤立记录失败: ${orphanedRecord.originalName}`, error);
+          console.error(`❌ 清理孤立记录失败: ${orphanedRecord.originalName}`, error);
         }
       }
     }
@@ -313,6 +327,11 @@ const initializeFileDatabase = async () => {
     // 8. 输出恢复的文件列表
     if (validFiles.length > 0) {      // List of recovered files (debug mode)
     }
+    
+    // 🔧 新增：执行文件完整性检查
+    setTimeout(() => {
+      performFileIntegrityCheck();
+    }, 1000); // 延迟1秒执行，确保初始化完成
     
   } catch (error) {
     console.error('❌ 初始化文件数据库失败:', error);
@@ -1005,48 +1024,42 @@ router.delete('/files/:id', requireAuth, async (req, res) => {
 
     console.log(`🗑️ 开始删除文件: ${file.originalName} (ID: ${fileId})`);
 
-    // 🏷️ 获取并清理文件的所有标签关联
+    // 🏷️ 获取并清理文件的所有标签关联 - 🔧 优化清理逻辑
     let affectedTagNames = [];
     try {
       const existingTags = database.tags.getFileTags(fileId);
       console.log(`📋 文件关联了${existingTags.length}个标签`);
       
-      for (const tag of existingTags) {
-        try {
-          // 删除文件-标签关联
-          const removeResult = database.tags.removeFileTag(fileId, tag.id);
-          if (removeResult.changes > 0) {
-            affectedTagNames.push(tag.name);
-            console.log(`✅ 已清理标签"${tag.name}"的文件关联`);
-            
-            // 🔧 检查标签是否还有其他有效文件
-            const remainingFiles = database.tags.getTagFiles(tag.id);
-            if (remainingFiles.length === 0) {
-              console.log(`ℹ️ 标签"${tag.name}"已没有关联文件`);
-            } else {
-              console.log(`ℹ️ 标签"${tag.name}"还有${remainingFiles.length}个关联文件`);
-            }
-          }
-        } catch (tagError) {
-          console.warn(`清理标签"${tag.name}"关联失败:`, tagError);
+      if (existingTags.length > 0) {
+        for (const tag of existingTags) {
+          affectedTagNames.push(tag.name);
+        }
+        
+        // 批量移除所有标签关联
+        const removeResult = database.tags.removeAllFileTags(fileId);
+        if (removeResult.changes > 0) {
+          console.log(`✅ 已清理所有标签关联: ${removeResult.changes} 行受影响`);
+          console.log(`🔔 涉及标签: ${affectedTagNames.join(', ')}`);
         }
       }
       
-      if (affectedTagNames.length > 0) {
-        console.log(`🔔 文件删除影响了${affectedTagNames.length}个标签: ${affectedTagNames.join(', ')}`);
-      }
     } catch (error) {
       console.warn('清理文件标签关联失败:', error);
     }
     
-    // 🔧 从数据库删除文件记录
+    // 🔧 从数据库删除文件记录（现在会自动处理所有外键引用）
     try {
       const dbDeleteResult = database.files.deleteFile(fileId);
       if (dbDeleteResult.changes > 0) {
-        console.log('💾 文件记录已从数据库删除');
+        console.log('💾 文件记录及相关数据已从数据库删除');
       }
     } catch (dbError) {
       console.error('❌ 从数据库删除文件记录失败:', dbError);
+      return res.status(500).json({
+        success: false,
+        message: '删除文件记录失败',
+        error: dbError.message
+      });
     }
     
     // 删除物理文件
@@ -1755,6 +1768,56 @@ router.get('/debug-permissions/:userId', requireAuth, async (req, res) => {
     });
   }
 });
+
+// 🔧 新增：文件完整性检查和备份建议
+const performFileIntegrityCheck = () => {
+  console.log('🔍 开始文件完整性检查...');
+  
+  try {
+    const allFiles = database.files.getAllFiles();
+    let missingFiles = [];
+    let validFiles = 0;
+    
+    for (const file of allFiles) {
+      if (file.uploadPath && fs.existsSync(file.uploadPath)) {
+        validFiles++;
+      } else {
+        missingFiles.push({
+          id: file.id,
+          name: file.originalName,
+          path: file.uploadPath,
+          createdAt: file.createdAt
+        });
+      }
+    }
+    
+    console.log(`📊 文件完整性检查结果:`);
+    console.log(`✅ 有效文件: ${validFiles} 个`);
+    console.log(`❌ 丢失文件: ${missingFiles.length} 个`);
+    
+    if (missingFiles.length > 0) {
+      console.warn('⚠️ 发现物理文件丢失，建议：');
+      console.warn('1. 检查文件是否被意外删除或移动');
+      console.warn('2. 检查磁盘空间和权限');
+      console.warn('3. 考虑设置自动备份');
+      console.warn('4. 丢失的文件列表：');
+      missingFiles.forEach(file => {
+        console.warn(`   - ${file.name} (${file.id}) - 创建于: ${file.createdAt}`);
+      });
+    }
+    
+    return {
+      total: allFiles.length,
+      valid: validFiles,
+      missing: missingFiles.length,
+      missingFiles: missingFiles
+    };
+    
+  } catch (error) {
+    console.error('❌ 文件完整性检查失败:', error);
+    return null;
+  }
+};
 
 // 导出路由和相关数据
 module.exports = router;

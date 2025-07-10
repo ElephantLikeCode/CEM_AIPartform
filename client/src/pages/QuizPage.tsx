@@ -41,7 +41,7 @@ interface QuizResult {
 
 const QuizPage: React.FC = () => {
   const { t } = useTranslation();
-  const { currentModel, checkForUpdates, settingsVersion } = useAIModel(); // 🔧 增加AI设置同步功能
+  const { currentModel } = useAIModel(); // 🤖 获取当前AI模型
   const navigate = useNavigate();
   const location = useLocation();
   
@@ -53,11 +53,29 @@ const QuizPage: React.FC = () => {
   const [timeLeft, setTimeLeft] = useState(1800);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [quizCompleted, setQuizCompleted] = useState(false);
-  const [results, setResults] = useState<QuizResult[]>([]);
+  const [quizCompleted, setQuizCompleted] = useState(false);  const [results, setResults] = useState<QuizResult[]>([]);
   const [finalScore, setFinalScore] = useState(0);
   const [accuracy, setAccuracy] = useState(0);  const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
+  // 🏆 新增：测试完成后的学习建议
+  const [nextLearningRecommendation, setNextLearningRecommendation] = useState<{
+    hasNext: boolean;
+    nextFile?: {
+      id: string;
+      name: string;
+      summary: string;
+      stages: number;
+      keyPoints: number;
+      tags: any[];
+    };
+    progress?: {
+      completed: number;
+      total: number;
+      percentage: number;
+    };
+    message?: string;
+  } | null>(null);
   
   // 防止重复生成题目的标志
   const isGenerating = useRef(false);
@@ -85,7 +103,6 @@ const QuizPage: React.FC = () => {
     fileCount: 1,
     isTagTest: false
   });
-
   const getUrlParams = () => {
     const params = new URLSearchParams(location.search);
     return {
@@ -95,9 +112,10 @@ const QuizPage: React.FC = () => {
       tagId: params.get('tagId'),
       tagName: params.get('tagName'),
       count: params.get('count'),
-      testType: params.get('testType')
+      testType: params.get('testType'),
+      model: params.get('model') // 🤖 获取URL中的AI模型参数
     };
-  };  useEffect(() => {
+  };useEffect(() => {
     if (timeLeft > 0 && !quizCompleted && !loading) {
       const timer = setTimeout(() => {
         setTimeLeft(timeLeft - 1);
@@ -157,9 +175,18 @@ const QuizPage: React.FC = () => {
     isGenerating.current = true;
     setGenerating(true);
     setError(null);
-    
-    try {      const params = getUrlParams();
-      const { userId, fileId, fileName, tagId, tagName, count, testType } = params;
+      try {      const params = getUrlParams();
+      const { userId, fileId, fileName, tagId, tagName, count, testType, model } = params;
+
+      // 🤖 优先使用URL参数中的模型，否则使用context中的模型
+      const selectedModel = model || currentModel || 'local';
+      
+      console.log('🤖 AI模型选择:', {
+        urlModel: model,
+        contextModel: currentModel,
+        selectedModel,
+        timestamp: new Date().toISOString()
+      });
 
       // 🔧 修复：如果 URL 中没有 testType，根据其他参数推断
       let actualTestType = testType;
@@ -180,12 +207,13 @@ const QuizPage: React.FC = () => {
         tagId,
         tagName,
         userId,
-        count
+        count,
+        selectedModel // 🤖 记录选择的模型
       });      const requestData: any = {
         userId: parseInt(userId || '1'), // 确保是数字
         count: parseInt(count || '8'), // 确保是数字
         difficulty: '中级',
-        model: currentModel // 🤖 添加AI模型选择
+        model: selectedModel // 🤖 使用选择的AI模型
       };
 
       if (actualTestType === 'tag') {
@@ -437,6 +465,11 @@ const QuizPage: React.FC = () => {
         
         const testTypeName = testInfo.isTagTest ? '標籤綜合測試' : '文檔測試';
         message.success(`${testTypeName}提交成功！得分：${finalScore}分`);
+        
+        // 🏆 新增：如果是文件测试，获取下一个学习建议
+        if (!testInfo.isTagTest && finalScore >= 80) {
+          await fetchNextLearningRecommendation(finalScore);
+        }
       } else {
         throw new Error(response.data.message || '提交失败');
       }
@@ -447,6 +480,43 @@ const QuizPage: React.FC = () => {
       setSubmitting(false);
     }
   }, [sessionId, questions, answers, testInfo]);
+
+  // 🏆 新增：获取下一个学习建议
+  const fetchNextLearningRecommendation = useCallback(async (testScore: number) => {
+    try {
+      const params = getUrlParams();
+      const { userId, fileId } = params;
+      
+      if (!fileId) {
+        console.log('⚠️ 没有文件ID，跳过获取学习建议');
+        return;
+      }
+      
+      console.log('🔍 获取下一个学习建议:', { userId, fileId, testScore });
+      
+      const response = await axios.post('/api/learning/complete-test', {
+        userId: parseInt(userId || '1'),
+        fileId,
+        testScore
+      });
+      
+      if (response.data.success) {
+        const data = response.data.data;
+        
+        setNextLearningRecommendation({
+          hasNext: data.hasMoreFiles,
+          nextFile: data.nextFile,
+          progress: data.progress,
+          message: data.message
+        });
+        
+        console.log('✅ 学习建议获取成功:', data);
+      }
+    } catch (error: any) {
+      console.error('❌ 获取学习建议失败:', error);
+      // 静默失败，不影响测试结果显示
+    }
+  }, []);
 
   const formatTime = (seconds: number) => {
     const minutes = Math.floor(seconds / 60);
@@ -860,19 +930,131 @@ const QuizPage: React.FC = () => {
               </div>
             ))}
           </div>
-        </Card>
-
-        {/* 底部操作按钮 */}
+        </Card>        {/* 底部操作按钮 */}
         <div style={{ 
           textAlign: 'center', 
           marginTop: 32,
           padding: window.innerWidth <= 768 ? '16px 0' : '24px 0'
         }}>
+          {/* 🏆 新增：学习建议显示 */}
+          {nextLearningRecommendation && (
+            <Card 
+              style={{ 
+                marginBottom: 24,
+                background: 'linear-gradient(135deg, #e6f7ff 0%, #f0f9ff 100%)',
+                border: '1px solid #91d5ff'
+              }}
+            >
+              <div style={{ textAlign: 'left' }}>
+                <Text style={{ 
+                  fontSize: 16, 
+                  fontWeight: 600, 
+                  color: '#1890ff',
+                  display: 'block',
+                  marginBottom: 12
+                }}>
+                  🎯 学习建议
+                </Text>
+                
+                <Paragraph style={{ marginBottom: 16, color: '#666' }}>
+                  {nextLearningRecommendation.message}
+                </Paragraph>
+                
+                {nextLearningRecommendation.nextFile && (
+                  <div style={{ 
+                    background: 'white', 
+                    padding: 16, 
+                    borderRadius: 8,
+                    marginBottom: 16,
+                    border: '1px solid #e6f7ff'
+                  }}>
+                    <Text strong style={{ color: '#1890ff', display: 'block', marginBottom: 8 }}>
+                      📚 建议学习：{nextLearningRecommendation.nextFile.name}
+                    </Text>
+                    <Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
+                      {nextLearningRecommendation.nextFile.summary}
+                    </Text>
+                    <Space wrap>
+                      <Tag color="blue">{nextLearningRecommendation.nextFile.stages} 个阶段</Tag>
+                      <Tag color="green">{nextLearningRecommendation.nextFile.keyPoints} 个要点</Tag>
+                      {nextLearningRecommendation.nextFile.tags.map((tag: any) => (
+                        <Tag key={tag.id} color={tag.color}>{tag.name}</Tag>
+                      ))}
+                    </Space>
+                  </div>
+                )}
+                
+                {nextLearningRecommendation.progress && (
+                  <div style={{ marginBottom: 16 }}>
+                    <Text type="secondary" style={{ fontSize: 13 }}>
+                      学习进度：{nextLearningRecommendation.progress.completed}/{nextLearningRecommendation.progress.total} 
+                      ({nextLearningRecommendation.progress.percentage}%)
+                    </Text>
+                    <Progress 
+                      percent={nextLearningRecommendation.progress.percentage} 
+                      size="small" 
+                      style={{ marginTop: 4 }}
+                    />
+                  </div>
+                )}
+              </div>
+            </Card>
+          )}
+          
           <Space 
             size={window.innerWidth <= 768 ? 'middle' : 'large'}
             direction={window.innerWidth <= 768 ? 'vertical' : 'horizontal'}
             style={{ width: window.innerWidth <= 768 ? '100%' : 'auto' }}
           >
+            {/* 🏆 条件显示：如果有下一个学习文件，优先显示继续学习按钮 */}
+            {nextLearningRecommendation?.hasNext ? (
+              <Button 
+                type="primary"
+                size={window.innerWidth <= 768 ? 'middle' : 'large'}
+                onClick={() => {
+                  // 跳转到学习页面，并传递下一个文件信息
+                  navigate('/learning', {
+                    state: {
+                      recommendedFileId: nextLearningRecommendation.nextFile?.id,
+                      fromQuiz: true
+                    }
+                  });
+                }}
+                style={{
+                  height: window.innerWidth <= 768 ? 40 : 48,
+                  padding: window.innerWidth <= 768 ? '0 24px' : '0 32px',
+                  borderRadius: window.innerWidth <= 768 ? 20 : 24,
+                  fontSize: window.innerWidth <= 768 ? 14 : 16,
+                  background: 'linear-gradient(135deg, #52c41a 0%, #73d13d 100%)',
+                  border: 'none',
+                  boxShadow: '0 4px 15px rgba(82, 196, 26, 0.4)',
+                  width: window.innerWidth <= 768 ? '100%' : 'auto',
+                  maxWidth: window.innerWidth <= 768 ? 280 : 'none'
+                }}
+              >
+                � 继续学习下一个文件
+              </Button>
+            ) : (
+              <Button 
+                type="primary" 
+                size={window.innerWidth <= 768 ? 'middle' : 'large'}
+                onClick={() => navigate('/learning')}
+                style={{
+                  height: window.innerWidth <= 768 ? 40 : 48,
+                  padding: window.innerWidth <= 768 ? '0 24px' : '0 32px',
+                  borderRadius: window.innerWidth <= 768 ? 20 : 24,
+                  fontSize: window.innerWidth <= 768 ? 14 : 16,
+                  background: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)',
+                  border: 'none',
+                  boxShadow: '0 4px 15px rgba(79, 172, 254, 0.4)',
+                  width: window.innerWidth <= 768 ? '100%' : 'auto',
+                  maxWidth: window.innerWidth <= 768 ? 280 : 'none'
+                }}
+              >
+                📚 返回学习页面
+              </Button>
+            )}
+            
             <Button 
               size={window.innerWidth <= 768 ? 'middle' : 'large'}
               onClick={() => navigate('/quiz-menu')}
@@ -889,24 +1071,7 @@ const QuizPage: React.FC = () => {
                 maxWidth: window.innerWidth <= 768 ? 280 : 'none'
               }}
             >
-              🔄 重新測試
-            </Button>
-            <Button 
-              type="primary" 
-              size={window.innerWidth <= 768 ? 'middle' : 'large'}
-              onClick={() => navigate('/learning')}
-              style={{
-                height: window.innerWidth <= 768 ? 40 : 48,
-                padding: window.innerWidth <= 768 ? '0 24px' : '0 32px',
-                borderRadius: window.innerWidth <= 768 ? 20 : 24,
-                fontSize: window.innerWidth <= 768 ? 14 : 16,
-                background: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)',
-                border: 'none',
-                boxShadow: '0 4px 15px rgba(79, 172, 254, 0.4)',
-                width: window.innerWidth <= 768 ? '100%' : 'auto',
-                maxWidth: window.innerWidth <= 768 ? 280 : 'none'
-              }}            >
-              � 返回學習
+              🔄 重新测试
             </Button>
           </Space>
         </div>
@@ -1093,45 +1258,6 @@ const QuizPage: React.FC = () => {
       }
     };
   }, [sessionId, questions.length, quizCompleted, saveQuizProgress]);
-
-  // 🔧 新增：监听AI设置变更事件
-  useEffect(() => {
-    const handleAISettingsUpdate = (event: CustomEvent) => {
-      console.log('🤖 Quiz页面：检测到AI设置更新', {
-        newSettings: event.detail.settings,
-        version: event.detail.version,
-        timestamp: event.detail.timestamp
-      });
-      
-      // 如果正在测试中，显示提示信息
-      if (questions.length > 0 && !quizCompleted) {
-        message.info({
-          content: '⚙️ AI模型设置已更新，可能影响题目生成',
-          duration: 4
-        });
-      }
-    };
-
-    window.addEventListener('ai-settings-updated', handleAISettingsUpdate as EventListener);
-    return () => window.removeEventListener('ai-settings-updated', handleAISettingsUpdate as EventListener);
-  }, [questions.length, quizCompleted]);
-
-  // 🔧 新增：页面加载时检查AI设置更新
-  useEffect(() => {
-    const initializeAISettings = async () => {
-      try {
-        console.log('🔄 Quiz页面加载，检查AI设置更新...');
-        const hasUpdates = await checkForUpdates();
-        if (hasUpdates) {
-          console.log('✅ Quiz页面：AI设置已更新');
-        }
-      } catch (error) {
-        console.error('❌ Quiz页面检查AI设置失败:', error);
-      }
-    };
-    
-    initializeAISettings();
-  }, []); // 只在组件加载时执行一次
 
   if (loading) {
     return (

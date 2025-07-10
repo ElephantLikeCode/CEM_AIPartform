@@ -1601,25 +1601,13 @@ ${sentences.slice(6).length > 0 ? '\n【补充说明】\n' + sentences.slice(6).
     const isComprehensiveTest = stage === 1 && content && content.length > 1000;
     const testType = isComprehensiveTest ? '综合评估测试' : `第${stage}阶段测试`;
     
-    // 🔧 新增：详细日志AI模型选择
-    console.log(`🤖 题目生成详细参数:`, {
-      传入模型: selectedModel,
-      本地默认模型: this.model,
-      测试类型: testType,
-      阶段: stage,
-      难度: difficulty,
-      题目数量: questionCount,
-      内容长度: content?.length || 0,
-      时间戳: new Date().toISOString()
-    });
-    
     // 🤖 检查是否使用DeepSeek
     if (selectedModel === 'deepseek') {
-      console.log(`🚀 使用DeepSeek API生成题目 - ${testType}`);
+      console.log(`🤖 使用DeepSeek API生成题目 - ${testType}`);
       return await this._generateQuestionsWithDeepSeek(content, stage, difficulty, questionCount, testType);
     }
     
-    console.log(`🏠 使用本地模型 ${this.model} 生成${questionCount}道${testType}题目...`);
+    console.log(`🤖 使用本地模型 ${this.model} 生成${questionCount}道${testType}题目...`);
     
     // 🔧 使用队列化请求
     return await this.queuedAIRequest(async () => {
@@ -1917,7 +1905,41 @@ ${content.substring(0, 8000)}
 重要：请严格按照上述JSON格式返回，不要添加任何额外的文字说明、注释或markdown标记。直接返回有效的JSON对象。`;
 
       console.log(`🤖 使用DeepSeek生成${questionCount}道${testType}题目...`);
-      const response = await deepseekService.generateCompletion(prompt);
+      
+      // 🔧 优化：增加重试机制处理aborted错误
+      let response;
+      let retryCount = 0;
+      const maxRetries = 2;
+      
+      while (retryCount <= maxRetries) {
+        try {
+          response = await deepseekService.generateCompletion(prompt, {
+            timeout: 120000, // 2分钟超时
+            temperature: 0.1,
+            max_tokens: 3000
+          });
+          break; // 成功则跳出循环
+        } catch (error) {
+          retryCount++;
+          console.log(`⚠️ DeepSeek请求失败 (尝试 ${retryCount}/${maxRetries + 1}): ${error.message}`);
+          
+          if (error.message.includes('aborted') && retryCount <= maxRetries) {
+            console.log(`🔄 检测到aborted错误，${retryCount < maxRetries ? '等待重试...' : '降级到本地模型'}`);
+            if (retryCount < maxRetries) {
+              // 等待一段时间后重试
+              await new Promise(resolve => setTimeout(resolve, 2000 * retryCount));
+              continue;
+            }
+          }
+          
+          // 如果是最后一次尝试或非aborted错误，抛出异常
+          if (retryCount > maxRetries) {
+            throw new Error(`DeepSeek请求在${maxRetries + 1}次尝试后仍然失败: ${error.message}`);
+          } else {
+            throw error;
+          }
+        }
+      }
         // 解析DeepSeek响应
       let questionsData;
       try {
@@ -2318,15 +2340,13 @@ ${content.substring(0, 6000)}
     
     return { questions };
   }
+
   // 🤖 新增：问答功能 - 基于上下文生成回答
   async generateAnswer(question, context) {
     try {
-      console.log('🏠 使用本地AI模型生成问答回答...');
-      console.log(`当前使用模型: ${this.model}`);
+      console.log('🤖 开始生成问答回答...');
       console.log(`问题: ${question.substring(0, 100)}${question.length > 100 ? '...' : ''}`);
       console.log(`上下文长度: ${context.length}字符`);
-      console.log(`AI服务状态: ${this.isConnected ? '已连接' : '未连接'}`);
-      console.log(`Base URL: ${this.baseURL}`);
 
       const prompt = `你是一个智能助手，请基于以下提供的知识库内容，准确回答用户的问题。
 
@@ -2388,7 +2408,18 @@ ${question}
           max_tokens: options.maxTokens ?? 1000
         }
       });
-      return response;
+      
+      // 修复：正确处理Ollama响应结构
+      if (response && response.message && response.message.content) {
+        return { text: response.message.content };
+      } else if (response && response.response) {
+        return { text: response.response };
+      } else if (response && typeof response === 'string') {
+        return { text: response };
+      } else {
+        console.error('❌ AI响应结构未知:', response);
+        throw new Error('AI响应格式异常');
+      }
     } catch (error) {
       console.error('❌ AI调用失败:', error);
       throw new Error('AI调用失败: ' + error.message);

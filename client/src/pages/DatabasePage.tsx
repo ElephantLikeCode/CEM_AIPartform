@@ -136,7 +136,7 @@ const formatTimeDisplay = (uploadTime: string, uploadTimestamp?: number, relativ
 
 const DatabasePage = () => {
   const { t } = useTranslation();
-  const { currentModel, checkForUpdates, settingsVersion } = useAIModel(); // 🔧 增加AI设置同步功能
+  const { currentModel } = useAIModel(); // 🤖 新增：获取当前AI模型
   const [files, setFiles] = useState<FileItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -414,6 +414,7 @@ const DatabasePage = () => {
       if (response.data.success) {
         message.success('文件标签更新成功');
         await fetchFiles(); // 刷新文件列表
+        await fetchTags(); // 🏷️ 修复：刷新标签列表以更新计数
         setFileTagModalVisible(false);
         setEditingFileId(null);
         setSelectedTags([]);
@@ -763,51 +764,6 @@ const DatabasePage = () => {
   }, [searchText, filterStatus, filterTag]);
   // 🤖 删除DeepSeek相关功能，只保留总开关控制
   // AI分析功能现在由总开关统一控制
-  // 🔧 新增：监听AI设置变更事件
-  useEffect(() => {
-    const handleAISettingsUpdate = (event: CustomEvent) => {
-      console.log('🤖 Database页面：检测到AI设置更新', {
-        newSettings: event.detail.settings,
-        version: event.detail.version,
-        timestamp: event.detail.timestamp
-      });
-      
-      // 显示设置更新提示，特别是对AI分析功能的影响
-      message.info({
-        content: '⚙️ AI模型设置已更新，AI分析功能可能受影响',
-        duration: 4
-      });
-      
-      // 如果正在进行AI分析，可以提示用户
-      if (aiAnalysisLoading) {
-        message.warning({
-          content: '⚠️ AI设置变更可能影响正在进行的AI分析任务',
-          duration: 6
-        });
-      }
-    };
-
-    window.addEventListener('ai-settings-updated', handleAISettingsUpdate as EventListener);
-    return () => window.removeEventListener('ai-settings-updated', handleAISettingsUpdate as EventListener);
-  }, [aiAnalysisLoading]);
-
-  // 🔧 新增：页面加载时检查AI设置更新
-  useEffect(() => {
-    const initializeAISettings = async () => {
-      try {
-        console.log('🔄 Database页面加载，检查AI设置更新...');
-        const hasUpdates = await checkForUpdates();
-        if (hasUpdates) {
-          console.log('✅ Database页面：AI设置已更新');
-        }
-      } catch (error) {
-        console.error('❌ Database页面检查AI设置失败:', error);
-      }
-    };
-    
-    initializeAISettings();
-  }, []); // 只在组件加载时执行一次
-
   return (
     <div>
       {/* 🤖 新增：AI模型切换器 */}

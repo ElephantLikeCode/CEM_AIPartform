@@ -3,6 +3,7 @@ const router = express.Router();
 const database = require('../database/database');
 const aiService = require('../utils/aiService');
 const { requireAuth } = require('../middleware/auth');
+const { initializeFileDatabase } = require('./upload'); // 引入文件数据库初始化函数
 
 // 🔧 新增：实时更新标签文件统计的辅助函数
 const updateTagFileStats = (tagId) => {
@@ -312,6 +313,11 @@ router.delete('/:id', async (req, res) => {
       // 强制删除 - 🔧 修复调用方式
       result = database.tags.forceDeleteTag(tagId);
       console.log(`✅ 强制删除标签"${tag.name}"成功`);
+      // 刷新文件数据库
+      if (typeof initializeFileDatabase === 'function') {
+        await initializeFileDatabase();
+        console.log('🔄 文件数据库已刷新');
+      }
     } else {
       // 🔧 在删除前检查并清理无效关联 - 修复调用方式
       try {

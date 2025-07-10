@@ -22,6 +22,7 @@ import LanguageSwitcher from './components/LanguageSwitcher';
 import { GenerationProvider, useGeneration } from './contexts/GenerationContext';
 import { AIModelProvider } from './contexts/AIModelContext';
 import DatabaseUserPage from './pages/DatabaseUserPage';
+import AppFooter from './components/AppFooter'; // 引入Footer
 
 const { Header, Content, Sider } = Layout;
 
@@ -83,7 +84,8 @@ const AppContent: React.FC = () => {
   // 检查是否在欢迎页面或登录页面
   const isWelcomePage = location.pathname === '/welcome';
   const isLoginPage = location.pathname === '/login';
-  const isPublicPage = isWelcomePage || isLoginPage;  // API健康检查 - 只在组件挂载时执行一次
+  const isRootPage = location.pathname === '/';
+  const isPublicPage = isWelcomePage || isLoginPage || isRootPage;  // API健康检查 - 只在组件挂载时执行一次
   useEffect(() => {
     fetch('/api/health')
       .then(res => res.json())
@@ -97,40 +99,41 @@ const AppContent: React.FC = () => {
       });
   }, []); // 空依赖数组，只执行一次
 
-  // 路径变化时检查登录状态
+  // 检查用户登录状态 - 仅在非公共页面上执行
   useEffect(() => {
-    // 只在非公共页面检查登录状态，使用路径名来避免重复调用
-    if (!isPublicPage) {
-      checkLoginStatus();
-    }
-  }, [location.pathname]); // 只依赖路径名，不依赖 isPublicPage 避免重复计算
-
-  const checkLoginStatus = async () => {
-    if (authChecking) return; // 防止重复检查
+    const checkAuth = async () => {
+      if (authChecking) return; // 防止重复检查
     
-    setAuthChecking(true);
-    try {
-      const response = await axios.get('/api/auth/check-login', { withCredentials: true });
-      setUserLoggedIn(response.data.loggedIn);
-      setUserRole(response.data.role || 'user');
+      setAuthChecking(true);
+      try {
+        const response = await axios.get('/api/auth/check-login', { withCredentials: true });
+        setUserLoggedIn(response.data.loggedIn);
+        setUserRole(response.data.role || 'user');
+        
         // 如果用户未登录且不在公共页面，重定向到登录页面并显示提示
-      if (!response.data.loggedIn && !isPublicPage) {
-        message.warning(t('auth.sessionExpired'));
-        navigate('/login', { replace: true });
-      }
-    } catch (error) {
-      console.error('检查登录状态失败:', error);
-      setUserLoggedIn(false);
-      setUserRole('user');
+        if (!response.data.loggedIn && !isPublicPage) {
+          message.warning(t('auth.sessionExpired'));
+          navigate('/login', { replace: true });
+        }
+      } catch (error) {
+        console.error('检查登录状态失败:', error);
+        setUserLoggedIn(false);
+        setUserRole('user');
+        
         // 网络或服务器错误时，重定向到登录页面
-      if (!isPublicPage) {
-        message.error(t('auth.sessionExpired'));
-        navigate('/login', { replace: true });
+        if (!isPublicPage) {
+          message.error(t('auth.sessionExpired'));
+          navigate('/login', { replace: true });
+        }
+      } finally {
+        setAuthChecking(false);
       }
-    } finally {
-      setAuthChecking(false);
+    };
+
+    if (!isPublicPage) {
+      checkAuth();
     }
-  };
+  }, [location.pathname, isPublicPage]); // 依赖于路径和是否为公共页面
 
   // 登出处理函数
   const handleLogout = async () => {
@@ -263,6 +266,8 @@ const AppContent: React.FC = () => {
       <div style={{ margin: 0, padding: 0 }}>        <Routes>
           <Route path="/welcome" element={<WelcomePage />} />
           <Route path="/login" element={<LoginPage />} />
+          {/* 根路径重定向到欢迎页面 */}
+          <Route path="/" element={<Navigate to="/welcome" replace />} />
         </Routes>
       </div>
     );
@@ -284,7 +289,9 @@ const AppContent: React.FC = () => {
         </div>
       </div>
     );
-  }  return (
+  }
+
+  return (
     <Layout style={{ minHeight: '100vh' }}>
       <Header style={{ 
         color: 'white', 
@@ -324,8 +331,7 @@ const AppContent: React.FC = () => {
           }}>
             狀態: {apiStatus}
           </div>
-          */}
-          
+          */}          
           {/* 🔧 新增：生成状态显示 */}
           {isGenerationLocked() && (
             <div style={{ 
@@ -418,7 +424,9 @@ const AppContent: React.FC = () => {
             </div>
           )}
         </div>
-      </Header>      <Layout style={{ marginTop: '72px' }}>        {/* 桌面端侧边栏 */}
+      </Header>
+      <Layout style={{ marginTop: '72px' }}>
+        {/* 桌面端侧边栏 */}
         {!isMobile && (
           <Sider 
             width={240}
@@ -447,7 +455,8 @@ const AppContent: React.FC = () => {
                 style={{ 
                   background: userRole === 'admin' ? '#52c41a' : userRole === 'sub_admin' ? '#fa8c16' : '#1890ff' 
                 }} 
-              />              <div style={{ marginTop: '8px', fontSize: '14px', color: '#666' }}>
+              />
+              <div style={{ marginTop: '8px', fontSize: '14px', color: '#666' }}>
                 {userRole === 'admin' ? t('role.admin') : userRole === 'sub_admin' ? t('role.subAdmin') : t('role.user')}
               </div>
             </div>
@@ -487,7 +496,9 @@ const AppContent: React.FC = () => {
                 style={{ 
                   background: userRole === 'admin' ? '#52c41a' : userRole === 'sub_admin' ? '#fa8c16' : '#1890ff' 
                 }} 
-              />              <div>                <div className="mobile-drawer-title" style={{ 
+              />
+              <div>
+                <div className="mobile-drawer-title" style={{ 
                   fontSize: '16px', 
                   fontWeight: '600',
                   lineHeight: '1.2',
@@ -500,7 +511,8 @@ const AppContent: React.FC = () => {
                 </div>
               </div>
             </div>
-          }          placement="left"
+          }
+          placement="left"
           onClose={() => setSidebarCollapsed(true)}
           open={isMobile && !sidebarCollapsed}
           styles={{ body: { padding: 0 } }}
@@ -530,7 +542,8 @@ const AppContent: React.FC = () => {
               }
             }))}
           />
-        </Drawer>        <Layout 
+        </Drawer>
+        <Layout 
           className={sidebarCollapsed ? 'sidebar-collapsed' : ''}
           style={{ 
             background: '#f5f5f5', 
@@ -546,17 +559,8 @@ const AppContent: React.FC = () => {
               overflow: 'auto',
               width: '100%'
             }}
-          ><Routes>
-              <Route path="/" element={
-                userLoggedIn ? (
-                  (userRole === 'admin' || userRole === 'sub_admin') ? 
-                    <Navigate to="/database" replace /> : 
-                    <Navigate to="/learning" replace />
-                ) : (
-                  <Navigate to="/welcome" replace />
-                )
-              } />
-              
+          >
+            <Routes>
               {/* 数据库页面 - 管理员和二级管理员可以访问 */}
               <Route 
                 path="/database" 
@@ -670,6 +674,7 @@ const AppContent: React.FC = () => {
               <Route path="*" element={<Navigate to="/welcome" replace />} />
             </Routes>
           </Content>
+          <AppFooter />
         </Layout>
       </Layout>
     </Layout>

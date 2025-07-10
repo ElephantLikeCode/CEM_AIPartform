@@ -372,7 +372,6 @@ const tagOperations = {
   deleteTag: function(tagId) {
     try {
       console.log(`🗑️ 开始删除标签: ${tagId}`);
-      
       // 🔧 在删除前先清理无效的文件关联 - 修复this调用
       try {
         console.log('🧹 删除前检查并清理无效文件关联...');
@@ -381,31 +380,29 @@ const tagOperations = {
         console.warn('清理无效文件关联时出错:', cleanupError);
         // 继续执行删除流程
       }
-      
       // 使用事务确保数据一致性
       const deleteTransaction = db.transaction(() => {
         // 1. 删除文件-标签关联
         const fileTagsResult = db.prepare('DELETE FROM file_tags WHERE tag_id = ?').run(tagId);
         console.log(`🧹 清理文件标签关联: ${fileTagsResult.changes} 条记录`);
-        
+        // 1.1 删除标签文件顺序表关联
+        const orderResult = db.prepare('DELETE FROM tag_file_order WHERE tag_id = ?').run(tagId);
+        console.log(`🧹 清理标签文件顺序: ${orderResult.changes} 条记录`);
         // 2. 删除标签学习内容
         const learningContentResult = db.prepare('DELETE FROM tag_learning_content WHERE tag_id = ?').run(tagId);
         console.log(`🧹 清理学习内容: ${learningContentResult.changes} 条记录`);
-        
         // 3. 删除学习进度记录
         const progressResult = db.prepare('DELETE FROM learning_progress WHERE tag_id = ?').run(tagId);
         console.log(`🧹 清理学习进度: ${progressResult.changes} 条记录`);
-        
         // 4. 删除测试会话记录
         const quizResult = db.prepare('DELETE FROM quiz_sessions WHERE tag_id = ?').run(tagId);
         console.log(`🧹 清理测试会话: ${quizResult.changes} 条记录`);
-        
         // 5. 最后删除标签本身
         const tagResult = db.prepare('DELETE FROM tags WHERE id = ?').run(tagId);
         console.log(`🗑️ 删除标签: ${tagResult.changes} 条记录`);
-        
         return {
           fileTagsDeleted: fileTagsResult.changes,
+          tagFileOrderDeleted: orderResult.changes,
           learningContentDeleted: learningContentResult.changes,
           progressDeleted: progressResult.changes,
           quizSessionsDeleted: quizResult.changes,
@@ -413,11 +410,9 @@ const tagOperations = {
           changes: tagResult.changes // 主要返回值，表示标签是否成功删除
         };
       });
-      
       const result = deleteTransaction();
       console.log(`✅ 标签删除完成:`, result);
       return result;
-      
     } catch (error) {
       console.error('删除标签失败:', error);
       throw error;
@@ -1029,11 +1024,95 @@ const fileOperations = {
     }
   },
 
-  // 删除文件记录
+  // 删除文件记录 - 🔧 修复：先清理所有外键引用
   deleteFile: (fileId) => {
     try {
-      console.log(`🗑️ 删除文件记录: ${fileId}`);
-      return db.prepare('DELETE FROM uploaded_files WHERE id = ?').run(fileId);
+      console.log(`🗑️ 开始删除文件记录和相关数据: ${fileId}`);
+      
+      // 开始事务
+      const deleteTransaction = db.transaction(() => {
+        let totalDeleted = 0;
+        
+        // 1. 删除文件-标签关联
+        try {
+          const fileTagsResult = db.prepare('DELETE FROM file_tags WHERE file_id = ?').run(fileId);
+          if (fileTagsResult.changes > 0) {
+            console.log(`🏷️ 删除了 ${fileTagsResult.changes} 个文件-标签关联`);
+            totalDeleted += fileTagsResult.changes;
+          }
+        } catch (error) {
+          console.warn('删除文件-标签关联失败:', error);
+        }
+        
+        // 2. 删除标签文件排序
+        try {
+          const tagFileOrderResult = db.prepare('DELETE FROM tag_file_order WHERE file_id = ?').run(fileId);
+          if (tagFileOrderResult.changes > 0) {
+            console.log(`📋 删除了 ${tagFileOrderResult.changes} 个标签文件排序记录`);
+            totalDeleted += tagFileOrderResult.changes;
+          }
+        } catch (error) {
+          console.warn('删除标签文件排序失败:', error);
+        }
+        
+        // 3. 删除文件用户可见性
+        try {
+          const fileVisibilityResult = db.prepare('DELETE FROM file_user_visibility WHERE file_id = ?').run(fileId);
+          if (fileVisibilityResult.changes > 0) {
+            console.log(`👁️ 删除了 ${fileVisibilityResult.changes} 个文件可见性记录`);
+            totalDeleted += fileVisibilityResult.changes;
+          }
+        } catch (error) {
+          console.warn('删除文件可见性失败:', error);
+        }
+        
+        // 4. 删除学习进度记录
+        try {
+          const learningProgressResult = db.prepare('DELETE FROM learning_progress WHERE file_id = ?').run(fileId);
+          if (learningProgressResult.changes > 0) {
+            console.log(`📚 删除了 ${learningProgressResult.changes} 个学习进度记录`);
+            totalDeleted += learningProgressResult.changes;
+          }
+        } catch (error) {
+          console.warn('删除学习进度记录失败:', error);
+        }
+        
+        // 5. 删除知识点记录（如果存在knowledge_files表的关联）
+        try {
+          // 先尝试通过uploaded_files的id删除knowledge_points
+          const knowledgePointsResult = db.prepare('DELETE FROM knowledge_points WHERE file_id IN (SELECT id FROM knowledge_files WHERE filename = (SELECT original_name FROM uploaded_files WHERE id = ?))').run(fileId);
+          if (knowledgePointsResult.changes > 0) {
+            console.log(`🧠 删除了 ${knowledgePointsResult.changes} 个知识点记录`);
+            totalDeleted += knowledgePointsResult.changes;
+          }
+        } catch (error) {
+          console.warn('删除知识点记录失败:', error);
+        }
+        
+        // 6. 删除相关的knowledge_files记录（如果存在）
+        try {
+          const knowledgeFilesResult = db.prepare('DELETE FROM knowledge_files WHERE filename = (SELECT original_name FROM uploaded_files WHERE id = ?)').run(fileId);
+          if (knowledgeFilesResult.changes > 0) {
+            console.log(`📖 删除了 ${knowledgeFilesResult.changes} 个知识文件记录`);
+            totalDeleted += knowledgeFilesResult.changes;
+          }
+        } catch (error) {
+          console.warn('删除知识文件记录失败:', error);
+        }
+        
+        // 7. 最后删除主文件记录
+        const mainResult = db.prepare('DELETE FROM uploaded_files WHERE id = ?').run(fileId);
+        if (mainResult.changes > 0) {
+          console.log(`📄 删除了主文件记录`);
+          totalDeleted += mainResult.changes;
+        }
+        
+        console.log(`✅ 文件删除事务完成，总共删除了 ${totalDeleted} 条记录`);
+        return mainResult;
+      });
+      
+      return deleteTransaction();
+      
     } catch (error) {
       console.error('❌ 删除文件记录失败:', error);
       throw error;

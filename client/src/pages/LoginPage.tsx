@@ -67,6 +67,7 @@ const LoginPage: React.FC = () => {
         // 登录成功后写入 userId
         if (response.data.user && response.data.user.id) {
           localStorage.setItem('userId', response.data.user.id.toString());
+          localStorage.setItem('userRole', response.data.user.role || 'user'); // 存储用户角色
         }
         
         message.success(t('auth.loginSuccess'));
