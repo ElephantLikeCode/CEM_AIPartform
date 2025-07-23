@@ -115,7 +115,7 @@ const QuizMenuPage: React.FC = () => {
     setGenerating(true);
     
     // 🔧 新增：启动生成锁定，绑定到特定材料
-    startGeneration('file', {
+    const { controller } = startGeneration('file', {
       name: material.name,
       userId: userId,
       materialId: material.id, // 绑定材料ID
@@ -136,7 +136,9 @@ const QuizMenuPage: React.FC = () => {
       };
       
       // Sending file quiz request
-      const response = await axios.post('/api/quiz/generate-questions', requestData);
+      const response = await axios.post('/api/quiz/generate-questions', requestData, {
+        signal: controller.signal
+      });
 
       // File quiz response received
       if (response.data.success) {
@@ -232,7 +234,7 @@ const QuizMenuPage: React.FC = () => {
     setGenerating(true);
     
     // 🔧 新增：启动生成锁定，绑定到特定材料
-    startGeneration('tag', {
+    const { controller } = startGeneration('tag', {
       name: material.name,
       userId: userId,
       materialId: material.id, // 绑定材料ID
@@ -252,7 +254,9 @@ const QuizMenuPage: React.FC = () => {
       };
       
       // Sending tag quiz request
-      const response = await axios.post('/api/quiz/generate-questions', requestData);
+      const response = await axios.post('/api/quiz/generate-questions', requestData, {
+        signal: controller.signal
+      });
 
       // Tag quiz response received
       if (response.data.success) {

@@ -69,14 +69,36 @@ class RAGService {
     }
   }
 
-  // 根据文件名获取文件ID（简化实现）
+  // 根据文件名获取文件ID（从数据库查询）
   async getFileIdByName(fileName) {
     try {
-      const uploadModule = require('../routes/upload');
-      const { fileDatabase } = uploadModule;
+      console.log(`🔍 查找文件: ${fileName}`);
       
-      const file = fileDatabase.find(f => f.originalName === fileName);
-      return file ? file.id : null;
+      // 🔧 修复：直接从数据库查询而不是依赖内存数据库
+      const database = require('../database/database');
+      const file = database.get('SELECT id FROM uploaded_files WHERE original_name = ?', [fileName]);
+      
+      if (file) {
+        console.log(`✅ 找到文件ID: ${file.id}`);
+        return file.id;
+      } else {
+        console.log('❌ 未找到文件，尝试模糊匹配...');
+        
+        // 尝试模糊匹配（处理可能的编码问题）
+        const allFiles = database.all('SELECT id, original_name FROM uploaded_files');
+        console.log(`📋 数据库中共有${allFiles.length}个文件`);
+        
+        for (const dbFile of allFiles) {
+          console.log(`  检查: ${dbFile.original_name}`);
+          if (dbFile.original_name && dbFile.original_name.includes(fileName.replace('.pdf', ''))) {
+            console.log(`✅ 模糊匹配成功: ${dbFile.id}`);
+            return dbFile.id;
+          }
+        }
+        
+        console.log('❌ 模糊匹配也失败');
+        return null;
+      }
     } catch (error) {
       console.error('获取文件ID失败:', error);
       return null;
@@ -108,18 +130,18 @@ class RAGService {
       }
     }
 
-    // 🔧 改进相关内容的组织方式
+    // 🔧 改进相关内容的组织方式 - 让AI回答中明确说明来源
     if (relevantContent && relevantContent.length > 0) {
       prompt += `\n\n【相关学习内容】`;
       
       relevantContent.forEach((content, index) => {
-        prompt += `\n\n[参考内容 ${index + 1}]`;
-        prompt += `\n来源：${content.fileName}`;
+        prompt += `\n\n来源文档：《${content.fileName}》`;
         prompt += `\n匹配度：${content.similarity.toFixed(3)}`;
         if (content.metadata?.searchType === 'keyword') {
           prompt += `\n匹配关键词：${content.metadata.matchedKeywords.join('、')}`;
         }
-        prompt += `\n内容：${content.content}`;
+        prompt += `\n相关内容：${content.content}`;
+        prompt += `\n${'='.repeat(50)}`;
       });
       
       prompt += `\n\n💡 以上是系统为你找到的 ${relevantContent.length} 个相关内容片段`;
@@ -144,16 +166,20 @@ class RAGService {
 🎯 基于上述相关内容回答用户问题，要求：
 
 1. **准确性优先**：只基于提供的学习内容回答，不要添加额外信息
-2. **内容针对性**：重点结合用户当前的学习内容和阶段
-3. **具体明确**：避免模糊的概括，要具体引用学习内容
-4. **学习导向**：回答要有助于用户更好地理解学习内容
-5. **诚实透明**：如果相关内容不足以完整回答问题，要明确说明
+2. **明确来源**：在回答中要具体说明信息来自哪个文档，不要用"参考内容1、2"等编号
+3. **内容针对性**：重点结合用户当前的学习内容和阶段
+4. **具体明确**：避免模糊的概括，要具体引用学习内容
+5. **学习导向**：回答要有助于用户更好地理解学习内容
+6. **诚实透明**：如果相关内容不足以完整回答问题，要明确说明
 
-📝 回答格式：
+📝 回答格式示例：
 - 开头简洁回答核心问题
+- 具体说明："根据《XXX文档》中的内容..."
 - 引用具体的学习内容支撑你的回答
 - 如适用，说明与当前学习阶段的关系
 - 如有必要，提供进一步学习建议
+
+⚠️ 重要：绝对不要使用"参考内容1"、"内容2"等编号来引用材料，要直接说明文档名称
 
 请提供有针对性的详细回答：`;
 
@@ -210,6 +236,42 @@ class RAGService {
       console.log(`🗑️ 文档 ${fileId} RAG索引已删除`);
     } catch (error) {
       console.error('删除文档RAG索引失败:', error);
+    }
+  }
+
+  // 🔧 新增：获取标签相关的知识库上下文
+  async getTagContext(tagId) {
+    try {
+      console.log(`🏷️ 获取标签${tagId}的知识库上下文`);
+      
+      // 获取标签下的所有文件
+      const database = require('../database/database');
+      const tagFiles = database.tags.getTagFiles(tagId);
+      
+      if (!tagFiles || tagFiles.length === 0) {
+        console.log('⚠️ 标签下没有关联的文件');
+        return '';
+      }
+      
+      // 获取文件内容
+      const uploadModule = require('../routes/upload');
+      const { fileDatabase } = uploadModule;
+      
+      let contextContent = '';
+      for (const tagFile of tagFiles) {
+        const file = fileDatabase.find(f => f.id === tagFile.file_id);
+        if (file && file.content) {
+          contextContent += `\n\n=== 文档: ${file.originalName} ===\n`;
+          contextContent += file.content;
+        }
+      }
+      
+      console.log(`📊 标签${tagId}上下文长度: ${contextContent.length} 字符`);
+      return contextContent;
+      
+    } catch (error) {
+      console.error(`❌ 获取标签${tagId}上下文失败:`, error);
+      return '';
     }
   }
 }

@@ -1,4 +1,5 @@
 const Database = require('better-sqlite3');
+const beijingTime = require('../utils/beijingTime'); // 🕐 北京时间工具
 const path = require('path');
 const fs = require('fs');
 
@@ -127,63 +128,6 @@ const initDatabase = () => {
       db.exec(`ALTER TABLE learning_progress ADD COLUMN test_score INTEGER`);
       console.log('✅ 已添加test_score字段到learning_progress表');
     }
-
-    // 🏷️ 新增：创建标签学习内容表（存储基于标签的合并学习内容）
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS tag_learning_content (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        tag_id INTEGER NOT NULL,
-        merged_content TEXT,
-        ai_analysis TEXT,
-        learning_stages TEXT,
-        total_stages INTEGER DEFAULT 1,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
-    // 🏷️ 新增：创建测试会话表，支持基于标签的测试
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS quiz_sessions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        session_id VARCHAR(255) NOT NULL UNIQUE,
-        user_id INTEGER NOT NULL,
-        tag_id INTEGER,
-        file_id VARCHAR(255),
-        test_type VARCHAR(50) DEFAULT 'comprehensive',
-        difficulty VARCHAR(50),
-        total_questions INTEGER DEFAULT 0,
-        correct_answers INTEGER DEFAULT 0,
-        final_score REAL DEFAULT 0,
-        status VARCHAR(50) DEFAULT 'active',
-        started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        completed_at DATETIME
-      )
-    `);
-
-    // 创建知识库文件表
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS knowledge_files (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        filename VARCHAR(255) NOT NULL,
-        file_type VARCHAR(50) NOT NULL,
-        file_path VARCHAR(500) NOT NULL,
-        processed BOOLEAN DEFAULT FALSE,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
-    // 创建知识点表
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS knowledge_points (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        file_id INTEGER NOT NULL,
-        title VARCHAR(255) NOT NULL,
-        content TEXT NOT NULL,
-        stage INTEGER NOT NULL,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
 
     // 🔧 修复：创建文件记录表，添加缺失的字段
     db.exec(`
@@ -388,24 +332,16 @@ const tagOperations = {
         // 1.1 删除标签文件顺序表关联
         const orderResult = db.prepare('DELETE FROM tag_file_order WHERE tag_id = ?').run(tagId);
         console.log(`🧹 清理标签文件顺序: ${orderResult.changes} 条记录`);
-        // 2. 删除标签学习内容
-        const learningContentResult = db.prepare('DELETE FROM tag_learning_content WHERE tag_id = ?').run(tagId);
-        console.log(`🧹 清理学习内容: ${learningContentResult.changes} 条记录`);
-        // 3. 删除学习进度记录
+        // 2. 删除学习进度记录
         const progressResult = db.prepare('DELETE FROM learning_progress WHERE tag_id = ?').run(tagId);
         console.log(`🧹 清理学习进度: ${progressResult.changes} 条记录`);
-        // 4. 删除测试会话记录
-        const quizResult = db.prepare('DELETE FROM quiz_sessions WHERE tag_id = ?').run(tagId);
-        console.log(`🧹 清理测试会话: ${quizResult.changes} 条记录`);
-        // 5. 最后删除标签本身
+        // 3. 最后删除标签本身
         const tagResult = db.prepare('DELETE FROM tags WHERE id = ?').run(tagId);
         console.log(`🗑️ 删除标签: ${tagResult.changes} 条记录`);
         return {
           fileTagsDeleted: fileTagsResult.changes,
           tagFileOrderDeleted: orderResult.changes,
-          learningContentDeleted: learningContentResult.changes,
           progressDeleted: progressResult.changes,
-          quizSessionsDeleted: quizResult.changes,
           tagDeleted: tagResult.changes,
           changes: tagResult.changes // 主要返回值，表示标签是否成功删除
         };
@@ -602,14 +538,8 @@ const tagOperations = {
         validFileCount = associatedFiles.length;
       }
       
-      // 获取学习内容
-      const learningContent = db.prepare('SELECT * FROM tag_learning_content WHERE tag_id = ?').get(tagId);
-      
       // 获取学习进度
       const learningProgress = db.prepare('SELECT COUNT(*) as count FROM learning_progress WHERE tag_id = ?').get(tagId);
-      
-      // 获取测试会话
-      const quizSessions = db.prepare('SELECT COUNT(*) as count FROM quiz_sessions WHERE tag_id = ?').get(tagId);
       
       console.log(`📊 标签${tagId}删除影响分析: 原始关联${associatedFiles.length}个, 有效关联${validFileCount}个, 无效关联${invalidFiles.length}个`);
       
@@ -619,9 +549,7 @@ const tagOperations = {
           fileAssociations: validFileCount, // 🔧 使用验证后的有效文件数量
           originalFileAssociations: associatedFiles.length, // 保留原始数量供参考
           invalidFileAssociations: invalidFiles.length,
-          hasLearningContent: !!learningContent,
           learningProgressRecords: learningProgress.count,
-          quizSessionRecords: quizSessions.count,
           canDeleteSafely: validFileCount === 0, // 🔧 基于有效文件数量判断
           requiresForce: validFileCount > 0
         },
@@ -629,7 +557,6 @@ const tagOperations = {
           validFiles: validFiles, // 🔧 有效文件列表
           invalidFiles: invalidFiles, // 🔧 无效文件列表
           associatedFiles: associatedFiles, // 保留原始关联供参考
-          learningContent: learningContent,
           warnings: validFileCount > 0 ? [
             `删除将影响 ${validFileCount} 个有效文件的标签关联`,
             learningContent ? '将删除已生成的学习内容' : null,
@@ -695,15 +622,37 @@ const tagOperations = {
       return [];
     }
   },
-  // 为文件添加标签 - 增强错误处理，同时自动添加排序
+  // 为文件添加标签 - 🔧 修改为单标签模式：一个文件只能有一个标签，新标签会替换旧标签
   addFileTag: function(fileId, tagId) {
     try {
-      console.log(`🔗 添加文件标签关联: 文件${fileId} -> 标签${tagId}`);
+      console.log(`🔗 添加文件标签关联 (单标签模式): 文件${fileId} -> 标签${tagId}`);
       
-      // 检查关联是否已存在
+      // 🔧 新增：检查文件是否已有标签，如果有则先移除
+      const existingTags = db.prepare('SELECT tag_id FROM file_tags WHERE file_id = ?').all(fileId);
+      if (existingTags.length > 0) {
+        console.log(`🔄 文件${fileId}已有${existingTags.length}个标签，将被替换为新标签${tagId}`);
+        
+        // 移除所有现有标签关联
+        for (const existingTag of existingTags) {
+          const removeResult = db.prepare('DELETE FROM file_tags WHERE file_id = ? AND tag_id = ?').run(fileId, existingTag.tag_id);
+          console.log(`🗑️ 移除旧标签关联: 文件${fileId} -> 标签${existingTag.tag_id} (${removeResult.changes}行)`);
+          
+          // 同时移除排序记录
+          try {
+            const orderRemoveResult = db.prepare('DELETE FROM tag_file_order WHERE tag_id = ? AND file_id = ?').run(existingTag.tag_id, fileId);
+            if (orderRemoveResult.changes > 0) {
+              console.log(`🗑️ 移除旧排序记录: 标签${existingTag.tag_id} -> 文件${fileId}`);
+            }
+          } catch (orderError) {
+            console.warn('移除旧排序记录失败:', orderError);
+          }
+        }
+      }
+      
+      // 检查新关联是否已存在（理论上不应该存在，因为上面已经清理了）
       const existing = db.prepare('SELECT id FROM file_tags WHERE file_id = ? AND tag_id = ?').get(fileId, tagId);
       if (existing) {
-        console.log(`ℹ️ 文件${fileId}和标签${tagId}的关联已存在`);
+        console.log(`ℹ️ 文件${fileId}和标签${tagId}的关联已存在，无需重复添加`);
         return { changes: 0, message: '关联已存在' };
       }
       
@@ -728,7 +677,7 @@ const tagOperations = {
         // 不影响主要功能，继续执行
       }
       
-      console.log(`✅ 文件标签关联添加成功: ${result.changes} 行受影响`);
+      console.log(`✅ 文件标签关联添加成功 (单标签模式): ${result.changes} 行受影响`);
       return result;
     } catch (error) {
       console.error('添加文件标签失败:', error);
@@ -831,39 +780,6 @@ const tagOperations = {
       console.error('获取未使用标签失败:', error);
       return [];
     }
-  },
-
-  // 保存标签的合并学习内容
-  saveTagLearningContent: (tagId, mergedContent, aiAnalysis, learningStages, totalStages) => {
-    try {
-      const existing = db.prepare('SELECT id FROM tag_learning_content WHERE tag_id = ?').get(tagId);
-      
-      if (existing) {
-        return db.prepare(`
-          UPDATE tag_learning_content 
-          SET merged_content = ?, ai_analysis = ?, learning_stages = ?, total_stages = ?, updated_at = CURRENT_TIMESTAMP
-          WHERE tag_id = ?
-        `).run(mergedContent, aiAnalysis, learningStages, totalStages, tagId);
-      } else {
-        return db.prepare(`
-          INSERT INTO tag_learning_content (tag_id, merged_content, ai_analysis, learning_stages, total_stages)
-          VALUES (?, ?, ?, ?, ?)
-        `).run(tagId, mergedContent, aiAnalysis, learningStages, totalStages);
-      }
-    } catch (error) {
-      console.error('保存标签学习内容失败:', error);
-      throw error;
-    }
-  },
-
-  // 获取标签的学习内容
-  getTagLearningContent: (tagId) => {
-    try {
-      return db.prepare('SELECT * FROM tag_learning_content WHERE tag_id = ?').get(tagId);
-    } catch (error) {
-      console.error('获取标签学习内容失败:', error);
-      throw error;
-    }
   }
 };
 
@@ -875,7 +791,7 @@ const fileOperations = {
       console.log(`💾 保存文件记录到数据库: ${fileData.originalName}`);
       
       // 🔧 修复：确保所有必需字段都有值
-      const now = new Date().toISOString();
+      const now = beijingTime.toBeijingISOString();
       const createdAt = fileData.createdAt ? new Date(fileData.createdAt).toISOString() : now;
       const processedAt = fileData.processedAt ? new Date(fileData.processedAt).toISOString() : null;
       const aiAnalysisStr = fileData.aiAnalysis ? JSON.stringify(fileData.aiAnalysis) : null;
@@ -957,7 +873,6 @@ const fileOperations = {
           hasAIResults: !!aiAnalysis,
           stages: aiAnalysis?.learningStages?.length || 0,
           keyPoints: aiAnalysis?.keyPoints?.length || 0,
-          difficulty: aiAnalysis?.difficulty || '未知',
           estimatedTime: aiAnalysis?.estimatedLearningTime || '未知',
           aiSummary: aiAnalysis?.summary,
           tags: [] // 标签信息需要单独加载
@@ -1011,7 +926,7 @@ const fileOperations = {
       
       // 总是更新 last_modified
       setClause.push('last_modified = ?');
-      values.push(new Date().toISOString());
+      values.push(beijingTime.toBeijingISOString());
       values.push(fileId);
 
       const sql = `UPDATE uploaded_files SET ${setClause.join(', ')} WHERE id = ?`;
@@ -1077,30 +992,11 @@ const fileOperations = {
           console.warn('删除学习进度记录失败:', error);
         }
         
-        // 5. 删除知识点记录（如果存在knowledge_files表的关联）
-        try {
-          // 先尝试通过uploaded_files的id删除knowledge_points
-          const knowledgePointsResult = db.prepare('DELETE FROM knowledge_points WHERE file_id IN (SELECT id FROM knowledge_files WHERE filename = (SELECT original_name FROM uploaded_files WHERE id = ?))').run(fileId);
-          if (knowledgePointsResult.changes > 0) {
-            console.log(`🧠 删除了 ${knowledgePointsResult.changes} 个知识点记录`);
-            totalDeleted += knowledgePointsResult.changes;
-          }
-        } catch (error) {
-          console.warn('删除知识点记录失败:', error);
-        }
+        // 🔧 已删除knowledge_points清理逻辑（表已被删除）
         
-        // 6. 删除相关的knowledge_files记录（如果存在）
-        try {
-          const knowledgeFilesResult = db.prepare('DELETE FROM knowledge_files WHERE filename = (SELECT original_name FROM uploaded_files WHERE id = ?)').run(fileId);
-          if (knowledgeFilesResult.changes > 0) {
-            console.log(`📖 删除了 ${knowledgeFilesResult.changes} 个知识文件记录`);
-            totalDeleted += knowledgeFilesResult.changes;
-          }
-        } catch (error) {
-          console.warn('删除知识文件记录失败:', error);
-        }
+        // 🔧 已删除knowledge_files和knowledge_points清理逻辑（表已被删除）
         
-        // 7. 最后删除主文件记录
+        // 6. 最后删除主文件记录
         const mainResult = db.prepare('DELETE FROM uploaded_files WHERE id = ?').run(fileId);
         if (mainResult.changes > 0) {
           console.log(`📄 删除了主文件记录`);
@@ -1396,6 +1292,21 @@ const learningProgressOperations = {
         throw new Error('参数类型错误：userId, currentStage, totalStages 必须是数字');
       }
 
+      // 🔧 新增：获取文件的标签信息
+      let tagId = null;
+      try {
+        const fileTagQuery = db.prepare('SELECT tag_id FROM file_tags WHERE file_id = ? ORDER BY created_at ASC LIMIT 1');
+        const fileTag = fileTagQuery.get(fileId);
+        if (fileTag) {
+          tagId = fileTag.tag_id;
+          console.log('📋 找到文件标签:', tagId);
+        } else {
+          console.log('⚠️ 文件未关联任何标签');
+        }
+      } catch (tagError) {
+        console.warn('获取文件标签失败:', tagError);
+      }
+
       // 🔧 只有在学习完成且测试分数大于等于80时才保存进度
       if (!completedBool || !testScoreInt || testScoreInt < 80) {
         console.log('⚠️ 未达到保存条件 - 必须完成学习且测试分数≥80');
@@ -1407,14 +1318,14 @@ const learningProgressOperations = {
       if (existing) {
         return db.prepare(`
           UPDATE learning_progress 
-          SET current_stage = ?, total_stages = ?, completed = ?, test_score = ?, learning_type = 'file', updated_at = CURRENT_TIMESTAMP
+          SET current_stage = ?, total_stages = ?, completed = ?, test_score = ?, tag_id = ?, learning_type = 'file', updated_at = CURRENT_TIMESTAMP
           WHERE user_id = ? AND file_id = ?
-        `).run(currentStageInt, totalStagesInt, 1, testScoreInt, userIdInt, fileId);
+        `).run(currentStageInt, totalStagesInt, 1, testScoreInt, tagId, userIdInt, fileId);
       } else {
         return db.prepare(`
-          INSERT INTO learning_progress (user_id, file_id, current_stage, total_stages, completed, test_score, learning_type)
-          VALUES (?, ?, ?, ?, ?, ?, 'file')
-        `).run(userIdInt, fileId, currentStageInt, totalStagesInt, 1, testScoreInt);
+          INSERT INTO learning_progress (user_id, file_id, current_stage, total_stages, completed, test_score, tag_id, learning_type)
+          VALUES (?, ?, ?, ?, ?, ?, ?, 'file')
+        `).run(userIdInt, fileId, currentStageInt, totalStagesInt, 1, testScoreInt, tagId);
       }
     } catch (error) {
       console.error('保存文件学习进度失败:', error);
@@ -1501,6 +1412,48 @@ const learningProgressOperations = {
     } catch (error) {
       console.error('检查学习权限失败:', error);
       return false;
+    }
+  },
+
+  // 🔧 新增：获取用户已完成的所有文件
+  getUserCompletedFiles: (userId) => {
+    try {
+      const userIdInt = parseInt(userId);
+      
+      if (isNaN(userIdInt)) {
+        throw new Error('参数类型错误：userId 必须是数字');
+      }
+      
+      return db.prepare(`
+        SELECT file_id, test_score, completed_at, tag_id 
+        FROM learning_progress 
+        WHERE user_id = ? AND completed = 1 AND learning_type = 'file'
+        ORDER BY completed_at DESC
+      `).all(userIdInt);
+    } catch (error) {
+      console.error('获取用户完成文件失败:', error);
+      return [];
+    }
+  },
+
+  // 🔧 新增：获取用户在特定标签下已完成的文件
+  getCompletedFilesByTag: (userId, tagId) => {
+    try {
+      const userIdInt = parseInt(userId);
+      
+      if (isNaN(userIdInt)) {
+        throw new Error('参数类型错误：userId 必须是数字');
+      }
+      
+      return db.prepare(`
+        SELECT file_id, test_score, updated_at as completed_at 
+        FROM learning_progress 
+        WHERE user_id = ? AND tag_id = ? AND completed = 1 AND learning_type = 'file'
+        ORDER BY updated_at ASC
+      `).all(userIdInt, tagId);
+    } catch (error) {
+      console.error('获取用户标签完成文件失败:', error);
+      return [];
     }
   }
 };

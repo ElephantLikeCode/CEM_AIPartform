@@ -4,6 +4,7 @@
  */
 
 const WebSocket = require('ws');
+const beijingTime = require('./beijingTime'); // 🕐 北京时间工具
 const jwt = require('jsonwebtoken');
 
 class WebSocketService {
@@ -79,7 +80,7 @@ class WebSocketService {
       data: {
         message: '连接成功',
         userId: userId,
-        timestamp: new Date().toISOString()
+        timestamp: beijingTime.toBeijingISOString()
       }
     });
 
@@ -117,7 +118,7 @@ class WebSocketService {
           this.leaveRoom(userId, data.roomId);
           break;
         case 'ping':
-          ws.send(JSON.stringify({ type: 'pong', timestamp: new Date().toISOString() }));
+          ws.send(JSON.stringify({ type: 'pong', timestamp: beijingTime.toBeijingISOString() }));
           break;
         case 'session_update':
           this.handleSessionUpdate(userId, data.sessionData);
@@ -209,7 +210,7 @@ class WebSocketService {
       data: {
         userId: userId,
         roomId: roomId,
-        timestamp: new Date().toISOString()
+        timestamp: beijingTime.toBeijingISOString()
       }
     }, userId);
   }
@@ -234,7 +235,7 @@ class WebSocketService {
         data: {
           userId: userId,
           roomId: roomId,
-          timestamp: new Date().toISOString()
+          timestamp: beijingTime.toBeijingISOString()
         }
       }, userId);
     }
@@ -246,7 +247,7 @@ class WebSocketService {
   handleSessionUpdate(userId, sessionData) {
     this.userSessions.set(userId, {
       ...sessionData,
-      lastUpdate: new Date().toISOString()
+      lastUpdate: beijingTime.toBeijingISOString()
     });
   }
 
@@ -261,7 +262,7 @@ class WebSocketService {
         userId: userId,
         session: sessionData,
         onlineUsers: Array.from(this.clients.keys()),
-        timestamp: new Date().toISOString()
+        timestamp: beijingTime.toBeijingISOString()
       }
     });
   }
@@ -277,7 +278,7 @@ class WebSocketService {
       data: {
         updatedBy: adminUserId,
         settings: settings,
-        timestamp: new Date().toISOString()
+        timestamp: beijingTime.toBeijingISOString()
       }
     });
   }
@@ -292,7 +293,7 @@ class WebSocketService {
         userId: userId,
         operation: operation, // 'upload', 'delete', 'lock', 'unlock'
         file: fileInfo,
-        timestamp: new Date().toISOString()
+        timestamp: beijingTime.toBeijingISOString()
       }
     });
   }
@@ -306,7 +307,7 @@ class WebSocketService {
       data: {
         message: '检测到会话冲突',
         conflict: conflictInfo,
-        timestamp: new Date().toISOString()
+        timestamp: beijingTime.toBeijingISOString()
       }
     });
   }
@@ -320,7 +321,7 @@ class WebSocketService {
       data: {
         message: message,
         maintenance: maintenanceInfo,
-        timestamp: new Date().toISOString()
+        timestamp: beijingTime.toBeijingISOString()
       }
     });
   }
@@ -334,7 +335,7 @@ class WebSocketService {
       type: 'learning_progress',
       data: {
         progress: progressData,
-        timestamp: new Date().toISOString()
+        timestamp: beijingTime.toBeijingISOString()
       }
     });
   }
@@ -347,7 +348,7 @@ class WebSocketService {
       type: 'quiz_status',
       data: {
         quiz: quizData,
-        timestamp: new Date().toISOString()
+        timestamp: beijingTime.toBeijingISOString()
       }
     });
   }
@@ -393,7 +394,7 @@ class WebSocketService {
       uniqueUsers: this.clients.size,
       totalRooms: this.rooms.size,
       uptime: process.uptime(),
-      timestamp: new Date().toISOString()
+      timestamp: beijingTime.toBeijingISOString()
     };
   }
 }

@@ -30,9 +30,9 @@ goto invalid
 
 :start_backend
 echo.
-echo Starting backend server...
-cd /d "%~dp0server"
-start "STGC3000 Backend Server" cmd /k "npm start"
+echo Starting backend server in development mode...
+REM start "STGC3000 Backend Server" /d "%~dp0server" cmd /k "npm run dev"
+start "STGC3000 Backend Server" /d "%~dp0server" cmd /k "npm start"
 echo Backend server is starting, check new window...
 echo.
 echo Press Enter to return to main menu...
@@ -42,8 +42,7 @@ goto main_menu
 :start_frontend
 echo.
 echo Starting frontend application...
-cd /d "%~dp0client"
-start "STGC3000 Frontend App" cmd /k "npm run dev"
+start "STGC3000 Frontend App" /d "%~dp0client" cmd /k "npm run dev"
 echo Frontend application is starting, check new window...
 echo.
 echo Press Enter to return to main menu...
@@ -52,24 +51,23 @@ goto main_menu
 
 :start_both
 echo.
-echo Starting backend server...
-cd /d "%~dp0server"
-start "STGC3000 Backend Server" cmd /k "npm start"
+echo Starting backend server in development mode...
+REM start "STGC3000 Backend Server" /d "%~dp0server" cmd /k "npm run dev"
+start "STGC3000 Backend Server" /d "%~dp0server" cmd /k "npm start"
 
-timeout /t 3 >nul
+timeout /t 2 >nul
 
 echo Starting frontend application...
-cd /d "%~dp0client"
-start "STGC3000 Frontend App" cmd /k "npm run dev"
+start "STGC3000 Frontend App" /d "%~dp0client" cmd /k "npm run dev"
 
 echo.
 echo Services are starting...
 echo.
 echo Service addresses:
 echo Backend API: http://localhost:3001
-echo Frontend App: http://localhost:3000
+echo Frontend App: http://localhost:5173 (Vite dev server)
 echo.
-echo After startup, visit http://localhost:3000 in browser
+echo After startup, visit the frontend URL in your browser
 echo.
 echo Press Enter to return to main menu...
 pause >nul
@@ -82,8 +80,8 @@ echo Closing existing backend processes...
 taskkill /f /im node.exe /fi "WINDOWTITLE eq STGC3000 Backend Server*" >nul 2>&1
 timeout /t 2 >nul
 echo Starting new backend server...
-cd /d "%~dp0server"
-start "STGC3000 Backend Server" cmd /k "npm start"
+REM start "STGC3000 Backend Server" /d "%~dp0server" cmd /k "npm run dev"
+start "STGC3000 Backend Server" /d "%~dp0server" cmd /k "npm start"
 echo Backend server restarted, check new window...
 echo.
 echo Press Enter to return to main menu...
@@ -97,8 +95,7 @@ echo Closing existing frontend processes...
 taskkill /f /im node.exe /fi "WINDOWTITLE eq STGC3000 Frontend App*" >nul 2>&1
 timeout /t 2 >nul
 echo Starting new frontend application...
-cd /d "%~dp0client"
-start "STGC3000 Frontend App" cmd /k "npm run dev"
+start "STGC3000 Frontend App" /d "%~dp0client" cmd /k "npm run dev"
 echo Frontend application restarted, check new window...
 echo.
 echo Press Enter to return to main menu...
@@ -114,14 +111,13 @@ taskkill /f /im node.exe /fi "WINDOWTITLE eq STGC3000 Frontend App*" >nul 2>&1
 timeout /t 3 >nul
 
 echo Starting backend server...
-cd /d "%~dp0server"
-start "STGC3000 Backend Server" cmd /k "npm start"
+REM start "STGC3000 Backend Server" /d "%~dp0server" cmd /k "npm run dev"
+start "STGC3000 Backend Server" /d "%~dp0server" cmd /k "npm start"
 
-timeout /t 3 >nul
+timeout /t 2 >nul
 
 echo Starting frontend application...
-cd /d "%~dp0client"
-start "STGC3000 Frontend App" cmd /k "npm run dev"
+start "STGC3000 Frontend App" /d "%~dp0client" cmd /k "npm run dev"
 
 echo.
 echo Both services restarted successfully!

@@ -47,7 +47,7 @@ const UserManagePage: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
-  const [modalType, setModalType] = useState<'password' | 'role'>('password');
+  const [modalType, setModalType] = useState<'password' | 'role' | 'username'>('password');
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [currentUserRole, setCurrentUserRole] = useState('user');
   const [currentUserId, setCurrentUserId] = useState<number | null>(null);
@@ -153,6 +153,29 @@ const UserManagePage: React.FC = () => {
     }
   };
 
+  // 修改用户名
+  const handleChangeUsername = async (values: { username: string }) => {
+    if (!selectedUser) return;
+
+    try {
+      const response = await axios.put(`/api/admin/users/${selectedUser.id}/username`, 
+        { username: values.username }, 
+        { withCredentials: true }
+      );
+      
+      if (response.data.success) {
+        message.success('用户名修改成功');
+        setModalVisible(false);
+        form.resetFields();
+        fetchUsers();
+      } else {
+        message.error(response.data.message || '修改用户名失败');
+      }
+    } catch (error: any) {
+      message.error(error.response?.data?.message || '修改用户名失败');
+    }
+  };
+
   // 打开修改密码模态框
   const openPasswordModal = (user: User) => {
     setSelectedUser(user);
@@ -167,6 +190,14 @@ const UserManagePage: React.FC = () => {
     setModalType('role');
     setModalVisible(true);
     form.setFieldsValue({ role: user.role });
+  };
+
+  // 打开修改用户名模态框
+  const openUsernameModal = (user: User) => {
+    setSelectedUser(user);
+    setModalType('username');
+    setModalVisible(true);
+    form.setFieldsValue({ username: user.username || '' });
   };
 
   // 检查是否可以操作用户
@@ -257,13 +288,25 @@ const UserManagePage: React.FC = () => {
       title: '注册时间',
       dataIndex: 'created_at',
       key: 'created_at',
-      render: (date: string) => new Date(date).toLocaleString('zh-CN'),
-      sorter: (a: User, b: User) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+      render: (date: string) => date, // 直接显示后端返回的格式化时间
+      sorter: (a: User, b: User) => {
+        // 将中文格式时间转换为可比较的时间戳
+        const parseChineseDate = (dateStr: string) => {
+          // 解析格式：2025年07月23日 11:08:33
+          const match = dateStr.match(/(\d{4})年(\d{2})月(\d{2})日\s+(\d{2}):(\d{2}):(\d{2})/);
+          if (match) {
+            const [, year, month, day, hour, minute, second] = match;
+            return new Date(parseInt(year), parseInt(month) - 1, parseInt(day), parseInt(hour), parseInt(minute), parseInt(second)).getTime();
+          }
+          return 0;
+        };
+        return parseChineseDate(a.created_at) - parseChineseDate(b.created_at);
+      },
     },
     {
       title: '操作',
       key: 'action',
-      width: 200,
+      width: 240,
       render: (_: any, user: User) => (
         <Space size="small">
           <Tooltip title={user.id === currentUserId ? "不能修改自己的密码" : "修改密码"}>
@@ -283,6 +326,16 @@ const UserManagePage: React.FC = () => {
               size="small"
               disabled={!canChangeRole(user)}
               onClick={() => openRoleModal(user)}
+            />
+          </Tooltip>
+          
+          <Tooltip title="修改用户名">
+            <Button
+              type="text"
+              icon={<UserOutlined />}
+              size="small"
+              disabled={!canOperateUser(user)}
+              onClick={() => openUsernameModal(user)}
             />
           </Tooltip>
           
@@ -437,10 +490,15 @@ const UserManagePage: React.FC = () => {
                 <KeyOutlined style={{ color: '#1890ff' }} />
                 修改用户密码
               </>
-            ) : (
+            ) : modalType === 'role' ? (
               <>
                 <EditOutlined style={{ color: '#1890ff' }} />
                 修改用户角色
+              </>
+            ) : (
+              <>
+                <UserOutlined style={{ color: '#1890ff' }} />
+                修改用户名
               </>
             )}
           </div>
@@ -528,7 +586,7 @@ const UserManagePage: React.FC = () => {
               </Space>
             </Form.Item>
           </Form>
-        ) : (
+        ) : modalType === 'role' ? (
           <Form
             form={form}
             layout="vertical"
@@ -566,6 +624,44 @@ const UserManagePage: React.FC = () => {
               <Text type="warning" style={{ fontSize: '12px' }}>
                 <ExclamationCircleOutlined style={{ marginRight: '4px' }} />
                 注意：修改用户角色将立即生效，请谨慎操作
+              </Text>
+            </div>
+
+            <Form.Item style={{ marginBottom: 0 }}>
+              <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
+                <Button onClick={() => setModalVisible(false)}>
+                  取消
+                </Button>
+                <Button type="primary" htmlType="submit">
+                  确定修改
+                </Button>
+              </Space>
+            </Form.Item>
+          </Form>
+        ) : (
+          <Form
+            form={form}
+            layout="vertical"
+            onFinish={handleChangeUsername}
+            size="large"
+          >
+            <Form.Item
+              name="username"
+              label="用户名"
+              rules={[
+                { required: true, message: '请输入用户名' },
+                { min: 2, message: '用户名至少2个字符' },
+                { max: 50, message: '用户名不能超过50个字符' },
+                { pattern: /^[a-zA-Z0-9\u4e00-\u9fa5_-]+$/, message: '用户名只能包含字母、数字、中文、下划线和横线' }
+              ]}
+            >
+              <Input placeholder="请输入用户名" size="large" />
+            </Form.Item>
+
+            <div style={{ marginBottom: '16px', padding: '12px', background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: '6px' }}>
+              <Text type="secondary" style={{ fontSize: '12px' }}>
+                <ExclamationCircleOutlined style={{ marginRight: '4px' }} />
+                用户名用于显示和识别用户，可以包含中文、字母、数字、下划线和横线
               </Text>
             </div>
 

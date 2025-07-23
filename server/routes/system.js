@@ -1,4 +1,5 @@
 const express = require('express');
+const beijingTime = require('../utils/beijingTime'); // 🕐 北京时间工具
 const router = express.Router();
 const fs = require('fs');
 const path = require('path');
@@ -9,7 +10,7 @@ const webSocketService = require('../utils/websocketService'); // 🔄 WebSocket
 router.get('/status', requireAdmin, async (req, res) => {
   try {
     const status = {
-      timestamp: new Date().toISOString(),
+      timestamp: beijingTime.toBeijingISOString(),
       server: {
         uptime: process.uptime(),
         memory: process.memoryUsage(),
@@ -88,7 +89,7 @@ router.get('/health', async (req, res) => {
   try {
     const health = {
       status: 'healthy',
-      timestamp: new Date().toISOString(),
+      timestamp: beijingTime.toBeijingISOString(),
       uptime: Math.floor(process.uptime()),
       checks: {
         server: 'pass',
@@ -123,7 +124,7 @@ router.get('/health', async (req, res) => {
   } catch (error) {
     res.status(503).json({
       status: 'unhealthy',
-      timestamp: new Date().toISOString(),
+      timestamp: beijingTime.toBeijingISOString(),
       error: error.message
     });
   }
@@ -152,7 +153,7 @@ router.get('/ai-settings-version', requireAuth, (req, res) => {
       version: aiSettingsVersion,
       settings: userAISettings,
       lastUpdate: new Date(lastAISettingsUpdate).toISOString(),
-      timestamp: new Date().toISOString(),
+      timestamp: beijingTime.toBeijingISOString(),
       userRole: userRole,
       hasDeepSeekAccess: isAdmin
     });

@@ -776,7 +776,6 @@ ${cleanContent}
     "mainTopic": "文档的具体主题（基于实际内容）",
     "coreContent": "文档的核心内容概要（提取关键信息）",
     "keyAreas": ["具体知识点1", "具体知识点2", "具体知识点3"],
-    "learningDifficulty": "基于内容复杂度的难度评估",
     "suggestedStageCount": 学习阶段数量（1-5，基于内容逻辑），
     "stageRationale": "基于内容特点的划分理由"
   },
@@ -815,7 +814,6 @@ ${cleanContent}
     "mainTopic": "具体主题",
     "coreContent": "核心内容",
     "keyAreas": ["知识点1", "知识点2"],
-    "learningDifficulty": "中级",
     "suggestedStageCount": 3,
     "stageRationale": "划分理由"
   },
@@ -1049,6 +1047,15 @@ JSON格式：
     let jsonContent = responseContent.trim();
     console.log('🔍 开始JSON提取，原始长度:', jsonContent.length);
     
+    // 🔧 新增：先尝试直接解析原始内容
+    try {
+      JSON.parse(jsonContent);
+      console.log('✅ 原始内容已是有效JSON，直接返回');
+      return jsonContent;
+    } catch (e) {
+      console.log('⚠️ 原始内容不是有效JSON，开始清理...');
+    }
+    
     // 第一步：移除常见的非JSON内容
     // 移除markdown代码块标记
     jsonContent = jsonContent.replace(/```json\s*/g, '').replace(/```\s*/g, '');
@@ -1065,6 +1072,15 @@ JSON格式：
     console.log('🧹 清理后长度:', jsonContent.length);
     console.log('📄 清理后内容预览:', jsonContent.substring(0, 200));
     
+    // 🔧 再次检查清理后的内容是否已经有效
+    try {
+      JSON.parse(jsonContent);
+      console.log('✅ 清理后内容已是有效JSON，跳过进一步处理');
+      return jsonContent;
+    } catch (e) {
+      console.log('⚠️ 清理后仍需要修复，继续处理...');
+    }
+    
     // 第二步：查找JSON对象的精确边界
     const jsonStart = jsonContent.indexOf('{');
     const jsonEnd = jsonContent.lastIndexOf('}');
@@ -1079,7 +1095,7 @@ JSON格式：
     jsonContent = jsonContent.substring(jsonStart, jsonEnd + 1);
     console.log('✂️ 提取JSON内容长度:', jsonContent.length);
     
-    // 第三步：修复常见的JSON格式问题
+    // 第三步：修复常见的JSON格式问题（只在需要时）
     jsonContent = this.fixCommonJSONIssues(jsonContent);
     
     return jsonContent;
@@ -1089,20 +1105,168 @@ JSON格式：
   fixCommonJSONIssues(jsonString) {
     let fixed = jsonString;
     
-    // 修复尾随逗号
+    // 🔧 改进：先检查JSON是否已经格式正确
+    try {
+      JSON.parse(fixed);
+      console.log('✅ JSON格式已正确，跳过修复');
+      return fixed;
+    } catch (e) {
+      console.log('🔧 JSON需要修复，开始处理...');
+    }
+    
+    // 1. 修复字符串值中的非法换行符（只处理确实有问题的情况）
+    fixed = fixed.replace(/"([^"]*?)\n([^"]*?)"/g, (match, before, after) => {
+      return `"${before}\\n${after}"`;
+    });
+    
+    // 2. 修复尾随逗号
     fixed = fixed.replace(/,(\s*[}\]])/g, '$1');
     
-    // 修复单引号为双引号
-    fixed = fixed.replace(/'([^']*?)'/g, '"$1"');
-    
-    // 修复属性名没有引号的问题
+    // 3. 修复属性名没有引号的问题（更精确的匹配）
     fixed = fixed.replace(/([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, '$1"$2":');
     
-    // 修复多行字符串问题（将实际换行符转换为\n）
-    fixed = fixed.replace(/"\s*\n\s*"/g, '\\n');
+    // 4. 修复单引号为双引号（只处理属性名）
+    fixed = fixed.replace(/([{,]\s*)'([^']*?)'\s*:/g, '$1"$2":');
+    
+    // 5. 修复incomplete JSON（缺失的闭合括号）
+    const openBraces = (fixed.match(/\{/g) || []).length;
+    const closeBraces = (fixed.match(/\}/g) || []).length;
+    if (openBraces > closeBraces) {
+      const missingBraces = openBraces - closeBraces;
+      fixed += '}'.repeat(missingBraces);
+      console.log(`🔧 添加了 ${missingBraces} 个缺失的闭合括号`);
+    }
+    
+    // 6. 修复JSON中的控制字符
+    fixed = fixed.replace(/[\u0000-\u001F\u007F-\u009F]/g, '');
     
     console.log('🔧 JSON修复完成');
     return fixed;
+  }
+
+  // 🔧 新增：激进的JSON修复方法
+  aggressiveJSONFix(responseContent) {
+    console.log('🚨 开始激进JSON修复...');
+    
+    // 1. 提取JSON部分
+    let content = responseContent.trim();
+    
+    // 2. 移除所有markdown标记
+    content = content.replace(/```json/gi, '').replace(/```/g, '');
+    
+    // 3. 找到第一个{和最后一个}
+    const firstBrace = content.indexOf('{');
+    const lastBrace = content.lastIndexOf('}');
+    
+    if (firstBrace === -1 || lastBrace === -1) {
+      throw new Error('无法找到JSON边界');
+    }
+    
+    content = content.substring(firstBrace, lastBrace + 1);
+    
+    // 4. 激进的字符串修复：重新构建所有字符串
+    content = content.replace(/"([^"]*?)"/g, (match, inner) => {
+      // 转义内部的特殊字符
+      const escaped = inner
+        .replace(/\\/g, '\\\\')  // 转义反斜杠
+        .replace(/"/g, '\\"')    // 转义双引号
+        .replace(/\n/g, '\\n')   // 转义换行符
+        .replace(/\r/g, '\\r')   // 转义回车符
+        .replace(/\t/g, '\\t');  // 转义制表符
+      return `"${escaped}"`;
+    });
+    
+    // 5. 修复可能的语法错误
+    content = content.replace(/,(\s*[}\]])/g, '$1'); // 移除尾随逗号
+    content = content.replace(/([}\]])(\s*)(["\w])/g, '$1,$2$3'); // 添加缺失的逗号
+    
+    // 6. 尝试通过正则表达式重建基本结构
+    if (!this.isValidJSONStructure(content)) {
+      console.log('🔄 尝试重建JSON结构...');
+      content = this.rebuildJSONStructure(responseContent);
+    }
+    
+    console.log('🚨 激进修复完成，结果长度:', content.length);
+    return content;
+  }
+
+  // 检查JSON结构是否基本有效
+  isValidJSONStructure(content) {
+    const openBraces = (content.match(/\{/g) || []).length;
+    const closeBraces = (content.match(/\}/g) || []).length;
+    const openBrackets = (content.match(/\[/g) || []).length;
+    const closeBrackets = (content.match(/\]/g) || []).length;
+    
+    return openBraces === closeBraces && openBrackets === closeBrackets;
+  }
+
+  // 重建JSON结构（最后的手段）
+  rebuildJSONStructure(responseContent) {
+    console.log('🔨 重建JSON结构...');
+    
+    // 尝试提取关键信息并重建
+    const questions = [];
+    
+    // 使用正则表达式提取题目信息
+    const questionPattern = /"question"\s*:\s*"([^"]+)"/g;
+    const optionsPattern = /"options"\s*:\s*\[(.*?)\]/g;
+    const correctAnswerPattern = /"correctAnswer"\s*:\s*(\d+)/g;
+    const explanationPattern = /"explanation"\s*:\s*"([^"]+)"/g;
+    
+    let questionMatch, optionsMatch, correctAnswerMatch, explanationMatch;
+    let questionIndex = 0;
+    
+    while ((questionMatch = questionPattern.exec(responseContent)) !== null) {
+      questionIndex++;
+      const question = {
+        id: questionIndex,
+        type: "multiple_choice",
+        question: questionMatch[1],
+        options: ["选项A", "选项B", "选项C", "选项D"],
+        correctAnswer: 0,
+        explanation: "基于学习内容的相关知识点。",
+        sourceQuote: "",
+        sourcePosition: ""
+      };
+      
+      // 尝试找到对应的选项
+      optionsMatch = optionsPattern.exec(responseContent);
+      if (optionsMatch) {
+        try {
+          const optionsStr = '[' + optionsMatch[1] + ']';
+          const parsedOptions = JSON.parse(optionsStr);
+          if (Array.isArray(parsedOptions)) {
+            question.options = parsedOptions;
+          }
+        } catch (e) {
+          console.log('⚠️ 选项解析失败，使用默认选项');
+        }
+      }
+      
+      // 尝试找到正确答案
+      correctAnswerMatch = correctAnswerPattern.exec(responseContent);
+      if (correctAnswerMatch) {
+        question.correctAnswer = parseInt(correctAnswerMatch[1]) || 0;
+      }
+      
+      // 尝试找到解释
+      explanationMatch = explanationPattern.exec(responseContent);
+      if (explanationMatch) {
+        question.explanation = explanationMatch[1];
+      }
+      
+      questions.push(question);
+      
+      if (questions.length >= 5) break; // 限制题目数量
+    }
+    
+    if (questions.length === 0) {
+      throw new Error('无法从响应中提取任何有效题目');
+    }
+    
+    const result = { questions };
+    console.log(`🔨 重建完成，提取到 ${questions.length} 道题目`);
+    return JSON.stringify(result);
   }
 
   // 🔧 改进：验证和增强学习阶段
@@ -1525,14 +1689,14 @@ ${sentences.slice(6).length > 0 ? '\n【补充说明】\n' + sentences.slice(6).
         throw new Error(`标签${tagId}不存在`);
       }
       
-      // 获取标签的学习内容
-      const learningContent = database.tags.getTagLearningContent(tagId);
-      if (!learningContent) {
-        throw new Error(`标签"${tag.name}"还没有生成学习内容`);
+      // 🔧 学习内容功能已移除（数据库表已删除）
+      const learningContent = null;
+      if (true) { // 学习内容已不可用
+        throw new Error(`学习内容功能已移除，无法生成基于标签的测验`);
       }
       
       // 解析学习内容
-      let mergedContent = learningContent.merged_content || '';
+      let mergedContent = '';
       let aiAnalysis = {};
       
       try {
@@ -1584,7 +1748,10 @@ ${sentences.slice(6).length > 0 ? '\n【补充说明】\n' + sentences.slice(6).
           isTagQuestion: true,
           tagId: tagId,
           tagName: tag.name,
-          sourceFiles: [tag.name] // 标记来源
+          sourceFiles: [tag.name], // 标记来源
+          // 保留AI生成的详细来源信息
+          sourceQuote: q.sourceQuote || '',
+          sourcePosition: q.sourcePosition || `标签"${tag.name}"相关内容`
         }));
       }
       
@@ -1649,18 +1816,30 @@ ${content.substring(0, 8000)}
 1. **针对性强**：题目必须基于上述内容，不要添加内容中没有的信息
 2. **难度适中**：${difficulty}难度，既要有基础理解题，也要有应用分析题
 3. **类型多样**：包含选择题和判断题
-4. **答案准确**：确保答案在提供的内容中能找到依据
+4. **答案准确**：确保答案在提供的内容中能找到依据，逻辑必须正确
+5. **选项质量**：每道选择题必须有4个完整、有意义、具体的选项，不能用"选项A"、"选项B"等占位符
+6. **内容具体**：所有选项都必须是具体的、有实际内容的答案选择
+7. **逻辑严谨**：题目问法与答案必须逻辑一致，避免"问什么包括但答案选不包括"这种错误
+8. **来源引用**：在解释中必须引用具体的原文片段，格式为"原文：'具体内容片段'"
+
+重要提醒：
+- 选择题的4个选项必须都是完整的句子或短语，有具体含义
+- 不要使用"选项A"、"选项B"、"选项C"、"选项D"等占位符
+- 不要使用"..."或其他省略符号
+- 每个选项至少要有2个以上的中文字符，并且有实际意义
 
 返回JSON格式：
 {
   "questions": [
     {
       "id": 1,
-      "type": "multiple_choice",
+      "type": "multiple_choice", 
       "question": "基于内容的具体问题？",
-      "options": ["选项A", "选项B", "选项C", "选项D"],
+      "options": ["具体答案A内容", "具体答案B内容", "具体答案C内容", "具体答案D内容"],
       "correctAnswer": 0,
-      "explanation": "答案解释，引用具体内容"
+      "explanation": "答案解释，原文：'引用的具体内容片段'",
+      "sourceQuote": "引用的具体内容片段（20-50字）",
+      "sourcePosition": "在文档中的大致位置描述"
     },
     {
       "id": 2,
@@ -1668,12 +1847,34 @@ ${content.substring(0, 8000)}
       "question": "判断题内容（基于提供的材料）",
       "options": ["正确", "错误"],
       "correctAnswer": 0,
-      "explanation": "判断依据和解释"
+      "explanation": "判断依据和解释，原文：'引用的具体内容片段'",
+      "sourceQuote": "引用的具体内容片段（20-50字）",
+      "sourcePosition": "在文档中的大致位置描述"
     }
   ]
 }
 
-要求所有题目都必须基于提供的学习内容，确保答案准确性。
+重要提醒：
+1. 每个题目的explanation必须包含"原文：'具体内容'"的引用格式
+2. sourceQuote必须是可以在原文中找到的确切文字片段
+3. 选择题的options必须都是有实际意义的完整答案，不能是占位符
+4. 绝对不要使用"选项A"、"选项B"、"选项C"、"选项D"等形式
+5. 题目逻辑必须正确：如果问"应该包含什么"，正确答案必须是确实包含的内容
+6. 避免反向逻辑题目：不要问"不包括什么"然后让选择包括的内容
+
+示例（错误的逻辑）：
+问题："以下哪项不包括在自我评估中？"
+正确答案："学术知识应用" ← 这是错误的，因为学术知识应用确实包括在内
+
+示例（正确的逻辑）：
+问题："自我评估部分应该包括以下哪项？"
+正确答案："学术知识的应用情况" ← 这是正确的
+
+示例（错误选项格式）：
+"options": ["选项A", "选项B", "选项C", "选项D"]
+
+示例（正确选项格式）：
+"options": ["仅包含学术知识的应用", "包含技能发展和个人成长反思", "只记录工作任务完成情况", "仅评估与同事的关系"]
 
 重要：请严格按照上述JSON格式返回，不要添加任何额外的文字说明、注释或markdown标记。直接返回有效的JSON对象。`;
 
@@ -1778,14 +1979,32 @@ ${content.substring(0, 8000)}
         
         const questionType = q.type === 'true_false' ? 'true_false' : 'multiple_choice';
         
-        // 验证选项
+        // 验证选项 - 🔧 修复：不允许自动补充无意义的选项
         let validOptions;
         if (questionType === 'true_false') {
           validOptions = ['正确', '错误'];
         } else {
-          validOptions = q.options.length >= 4 ? 
-            q.options.slice(0, 4).map(opt => String(opt).trim()) :
-            [...q.options.map(opt => String(opt).trim()), ...Array(4 - q.options.length).fill(0).map((_, idx) => `选项${String.fromCharCode(65 + q.options.length + idx)}`)];
+          // 选择题必须有至少4个有效选项
+          if (!q.options || q.options.length < 4) {
+            console.warn(`⚠️ 题目${i + 1}选项不足4个(只有${q.options?.length || 0}个)，跳过`);
+            continue;
+          }
+          
+          // 验证所有选项都有实际内容
+          const cleanOptions = q.options.map(opt => String(opt).trim()).filter(opt => 
+            opt.length > 0 && 
+            !opt.match(/^选项[A-Z]$/) && 
+            !opt.match(/^[A-Z]$/) && 
+            opt !== '...' &&
+            opt.length >= 2
+          );
+          
+          if (cleanOptions.length < 4) {
+            console.warn(`⚠️ 题目${i + 1}有效选项不足4个(有效选项:${cleanOptions.length})，跳过`);
+            continue;
+          }
+          
+          validOptions = cleanOptions.slice(0, 4);
         }
         
         // 验证正确答案
@@ -1804,7 +2023,9 @@ ${content.substring(0, 8000)}
           question: String(q.question).trim(),
           options: validOptions,
           correctAnswer: correctAnswer,
-          explanation: q.explanation ? String(q.explanation).trim() : '基于学习内容的相关知识点。'
+          explanation: q.explanation ? String(q.explanation).trim() : '基于学习内容的相关知识点。',
+          sourceQuote: q.sourceQuote ? String(q.sourceQuote).trim() : '',
+          sourcePosition: q.sourcePosition ? String(q.sourcePosition).trim() : ''
         };
         
         // 验证题目质量
@@ -1863,46 +2084,30 @@ ${content.substring(0, 8000)}
       }
 
       // 构建DeepSeek专用提示
-      const prompt = `你是一位专业的考试题目设计专家。请基于以下学习内容生成 ${questionCount} 道${difficulty}难度的专业测试题目。
+      const prompt = `你是一位专业的考试题目设计专家。请严格按照JSON格式要求生成题目。
 
-重要说明：这是针对具体学习材料的专业测试，题目必须严格基于提供的内容。
+基于以下学习内容生成 ${questionCount} 道${difficulty}难度的专业测试题目：
 
 === 学习内容 ===
 ${content.substring(0, 8000)}
 === 内容结束 ===
 
-请生成 ${questionCount} 道测试题目，要求：
+⚠️ 重要格式要求：
+1. 必须返回严格的JSON格式，不要添加任何其他文字
+2. 字符串值中不能包含未转义的双引号
+3. 所有文本必须在一行内，不能换行
+4. explanation字段必须包含原文引用
 
-1. **针对性强**：题目必须基于上述内容，不要添加内容中没有的信息
-2. **难度适中**：${difficulty}难度，既要有基础理解题，也要有应用分析题
-3. **类型多样**：包含选择题和判断题
-4. **答案准确**：确保答案在提供的内容中能找到依据
+严格按照以下JSON格式返回（不要添加任何markdown标记或其他文字）：
 
-返回JSON格式：
-{
-  "questions": [
-    {
-      "id": 1,
-      "type": "multiple_choice",
-      "question": "基于内容的具体问题？",
-      "options": ["选项A", "选项B", "选项C", "选项D"],
-      "correctAnswer": 0,
-      "explanation": "答案解释，引用具体内容"
-    },
-    {
-      "id": 2,
-      "type": "true_false",
-      "question": "判断题内容（基于提供的材料）",
-      "options": ["正确", "错误"],
-      "correctAnswer": 0,
-      "explanation": "判断依据和解释"
-    }
-  ]
-}
+{"questions":[{"id":1,"type":"multiple_choice","question":"题目内容","options":["选项A","选项B","选项C","选项D"],"correctAnswer":0,"explanation":"解释内容，原文：'引用片段'","sourceQuote":"具体引用片段","sourcePosition":"位置描述"},{"id":2,"type":"true_false","question":"判断题内容","options":["正确","错误"],"correctAnswer":0,"explanation":"解释内容，原文：'引用片段'","sourceQuote":"具体引用片段","sourcePosition":"位置描述"}]}
 
-要求所有题目都必须基于提供的学习内容，确保答案准确性。
-
-重要：请严格按照上述JSON格式返回，不要添加任何额外的文字说明、注释或markdown标记。直接返回有效的JSON对象。`;
+要求：
+- 题目必须基于提供的学习内容
+- explanation中必须包含"原文：'具体内容'"格式的引用
+- sourceQuote必须是原文中的确切文字片段
+- 所有字符串不能包含换行符，用空格替代
+- 返回完整有效的JSON，不要截断`;
 
       console.log(`🤖 使用DeepSeek生成${questionCount}道${testType}题目...`);
       
@@ -1944,15 +2149,42 @@ ${content.substring(0, 8000)}
       let questionsData;
       try {
         // 改进的JSON提取逻辑
-        const cleanedResponse = this.extractAndCleanJSON(response);
-        questionsData = JSON.parse(cleanedResponse);
+        console.log('🔍 DeepSeek原始响应长度:', response.length);
+        console.log('📝 DeepSeek响应预览:', response.substring(0, 300));
+        
+        // 先尝试直接解析原始响应
+        try {
+          const directParsed = JSON.parse(response);
+          console.log('✅ DeepSeek JSON直接解析成功');
+          questionsData = directParsed;
+        } catch (directError) {
+          console.log('⚠️ 直接解析失败，尝试清理:', directError.message);
+          
+          const cleanedResponse = this.extractAndCleanJSON(response);
+          console.log('🧹 清理后JSON预览:', cleanedResponse.substring(0, 300));
+          
+          // 尝试解析清理后的JSON
+          questionsData = JSON.parse(cleanedResponse);
+          console.log('✅ DeepSeek JSON清理后解析成功');
+        }
+        
       } catch (parseError) {
         console.error('❌ DeepSeek响应解析失败，原始响应:', response.substring(0, 500));
         console.error('❌ 解析错误:', parseError.message);
-        console.log('⚠️ 降级到本地模型');
-        return await this.queuedAIRequest(async () => {
-          return await this._generateQuestionsCore(content, stage, difficulty, questionCount, testType);
-        }, `生成题目-${testType}(解析失败降级)`);
+        
+        // 🔧 尝试更激进的JSON修复
+        try {
+          console.log('🔄 尝试激进JSON修复...');
+          const aggressiveFixed = this.aggressiveJSONFix(response);
+          questionsData = JSON.parse(aggressiveFixed);
+          console.log('✅ 激进修复成功');
+        } catch (secondError) {
+          console.error('❌ 激进修复也失败:', secondError.message);
+          console.log('⚠️ 降级到本地模型');
+          return await this.queuedAIRequest(async () => {
+            return await this._generateQuestionsCore(content, stage, difficulty, questionCount, testType);
+          }, `生成题目-${testType}(解析失败降级)`);
+        }
       }
 
       // 验证题目数据

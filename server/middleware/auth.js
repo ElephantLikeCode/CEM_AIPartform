@@ -1,4 +1,5 @@
 const db = require('../database/database');
+const beijingTime = require('../utils/beijingTime'); // 🕐 引入北京时间工具
 
 // 登录验证中间件
 const requireAuth = async (req, res, next) => {
@@ -150,7 +151,7 @@ const getCurrentUser = async (req, res, next) => {
           email: user.email,
           username: user.username,
           role: user.role || 'user',
-          createdAt: user.created_at
+          createdAt: beijingTime.formatToChinese(user.created_at) // 🕐 转换为北京时间
         };
       }
     } catch (error) {

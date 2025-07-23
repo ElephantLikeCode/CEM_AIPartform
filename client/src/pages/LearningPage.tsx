@@ -10,6 +10,11 @@ import {
   ExclamationCircleOutlined, TagsOutlined, SettingOutlined
 } from '@ant-design/icons';
 import axios from 'axios';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import rehypeHighlight from 'rehype-highlight';
+import 'highlight.js/styles/github.css'; // 代码高亮样式
+import '../styles/markdown.css'; // 自定义Markdown样式
 import { useTranslation } from 'react-i18next';
 import { useLocation } from 'react-router-dom'; // 🏆 新增：用于接收导航状态
 import { navigateToPage, PAGES } from '../utils/navigation';
@@ -80,6 +85,43 @@ interface ChatMessage {
   relevantChunks?: number; // 🔧 新增：相关内容块数量
   fallback?: boolean; // 🔧 新增：降级处理标识
 }
+
+// 学习页面消息内容渲染组件
+const LearningMessageContent: React.FC<{ content: string; isUserMessage: boolean; isMobile: boolean }> = ({ 
+  content, 
+  isUserMessage, 
+  isMobile 
+}) => {
+  if (isUserMessage) {
+    // 用户消息直接显示文本
+    return (
+      <div style={{ 
+        whiteSpace: 'pre-wrap', 
+        lineHeight: 1.6,
+        fontSize: isMobile ? 13 : 14,
+        marginTop: 8 
+      }}>
+        {content}
+      </div>
+    );
+  }
+
+  // AI消息使用Markdown渲染
+  return (
+    <div className="markdown-content" style={{ 
+      fontSize: isMobile ? 13 : 14,
+      marginTop: 8,
+      lineHeight: 1.6
+    }}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeHighlight]}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
+};
 
 const LearningPage: React.FC = () => {
   const { t } = useTranslation();
@@ -308,18 +350,11 @@ const LearningPage: React.FC = () => {
           console.log('ℹ️ 没有找到可用的学习材料');
           console.log('📊 调试信息:', response.data.debug);
           
-          // 🔧 提供更详细的提示信息
-          if (response.data.debug?.totalFiles > 0) {
-            message.info({
-              content: `发现${response.data.debug.totalFiles}个文件，但都未完成AI分析。请等待文件分析完成后重试。`,
-              duration: 6
-            });
-          } else {
-            message.info({
-              content: '暂无上传的文件。请先在"文档管理"页面上传学习文档。',
-              duration: 5
-            });
-          }
+          // 🔧 提供通用的提示信息，不泄露服务器信息
+          message.info({
+            content: '暂无可用的学习材料。请联系管理员为您分配学习文档，或等待文档处理完成。',
+            duration: 5
+          });
         }
       } else {
         throw new Error(response.data.message || '获取学习材料失败');
@@ -354,14 +389,23 @@ const LearningPage: React.FC = () => {
     }
   };
   // Tag learning function has been removed
-  const startLearning = async () => {
-    if (!selectedMaterial) {
+  const startLearning = async (forceFileIdOrEvent?: string | React.MouseEvent) => {
+    // 如果是事件对象，则不传入文件ID
+    const forceFileId = typeof forceFileIdOrEvent === 'string' ? forceFileIdOrEvent : undefined;
+    const targetFileId = forceFileId || selectedMaterial;
+    
+    if (!targetFileId) {
       message.warning('請選擇學習材料');
       return;
     }
 
+    // 如果使用了强制文件ID，同步更新selectedMaterial状态
+    if (forceFileId && forceFileId !== selectedMaterial) {
+      setSelectedMaterial(forceFileId);
+    }
+
     // 验证材料是否还存在
-    const materialExists = await validateLearningMaterial(selectedMaterial);
+    const materialExists = await validateLearningMaterial(targetFileId);
     if (!materialExists) {
       message.error('选择的学习材料不存在或已被删除，请重新选择');
       setSelectedMaterial('');
@@ -371,7 +415,7 @@ const LearningPage: React.FC = () => {
     try {
       const response = await axios.post('/api/learning/start', {
         userId,
-        fileId: selectedMaterial
+        fileId: targetFileId
       });
       
       setTotalStages(response.data.totalStages);
@@ -614,16 +658,36 @@ ${progress?.fileName ? `- 学习文件：${progress.fileName}` : ''}
         url: error.config?.url
       });
       
+      // 改进错误消息处理
+      let errorContent = '抱歉，我暂时无法回答您的问题。';
+      
+      if (error.response?.data?.message) {
+        // 使用服务器返回的用户友好错误信息
+        errorContent = error.response.data.message;
+      } else if (error.message.includes('timeout') || error.message.includes('aborted')) {
+        errorContent = '网络连接超时，请检查网络后重试。您也可以：\n• 稍等片刻后重新提问\n• 尝试提问更简短的问题\n• 检查网络连接状态';
+      } else if (error.message.includes('Network Error') || error.code === 'ECONNRESET') {
+        errorContent = '网络连接出现问题，请稍后重试。如问题持续存在，请联系技术支持。';
+      } else {
+        errorContent = '抱歉，AI服务暂时不可用。可能的原因：\n• 网络连接不稳定\n• 服务器暂时繁忙\n• 请求处理超时\n\n请稍后重试，或者重新开始学习。';
+      }
+      
       // 添加错误消息到聊天
       const errorMessage: ChatMessage = {
         id: (Date.now() + 1).toString(),
         type: 'ai',
-        content: '抱歉，我暂时无法回答您的问题。可能是因为：\n1. AI服务暂时不可用\n2. 学习上下文加载失败\n\n请稍后重试，或者重新开始学习。',
+        content: errorContent,
         timestamp: new Date().toISOString()
       };
       
       setChatMessages(prev => [...prev, errorMessage]);
-      message.error('AI对话失败，请稍后再试');
+      
+      // 显示更友好的错误提示
+      if (error.response?.data?.message) {
+        message.warning(error.response.data.message);
+      } else {
+        message.error('AI对话失败，请稍后再试');
+      }
     } finally {
       setIsAiThinking(false);
       console.log('💬 AI聊天请求结束');
@@ -742,9 +806,9 @@ ${progress?.fileName ? `- 学习文件：${progress.fileName}` : ''}
   };
   const resetLearning = () => {
     Modal.confirm({
-      title: '确认重新选择学习材料',
+      title: '重新选择学习材料',
       icon: <ExclamationCircleOutlined />,
-      content: '重新选择将清除当前的学习进度，确定要继续吗？',
+      content: '这将结束当前的学习会话，但不会删除您已完成的学习记录。您可以重新选择其他学习材料继续学习。',
       okText: '确定',
       cancelText: '取消',
       centered: isMobile,
@@ -759,26 +823,26 @@ ${progress?.fileName ? `- 学习文件：${progress.fileName}` : ''}
         // Tag-related state cleanup removed
         setChatMessages([]);
         
-        // 🔧 增强：清理服务器端进度 - 增加错误处理
+        // 🔧 增强：清理服务器端当前学习状态 - 不删除已保存的学习记录
         try {
-          console.log(`🔄 重置用户${userId}的服务器端学习进度...`);
+          console.log(`🔄 重置用户${userId}的当前学习状态...`);
           const response = await axios.post(`/api/learning/progress/reset/${userId}`);
           
           if (response.data.success) {
-            console.log('✅ 服务器端学习进度已重置');
-            message.success('学习进度已重置，可以重新选择学习材料');
+            console.log('✅ 当前学习状态已清除');
+            message.success('已结束当前学习会话，可以重新选择学习材料');
           } else {
-            console.warn('⚠️ 服务器端进度重置响应异常:', response.data);
+            console.warn('⚠️ 重置响应异常:', response.data);
           }
         } catch (error: any) {
-          console.error('❌ 重置服务器端进度失败:', error);
+          console.error('❌ 重置当前学习状态失败:', error);
           
           // 🔧 提供更友好的错误处理
           if (error.response?.status === 404) {
             console.log('ℹ️ 重置API端点不存在，但本地状态已清理');
-            message.info('学习进度已清理，可以重新开始学习');
+            message.info('当前学习状态已清理，可以重新开始学习');
           } else {
-            message.warning('本地学习进度已清理，但服务器同步可能失败');
+            message.warning('本地学习状态已清理，但服务器同步可能失败');
           }
         }
       }
@@ -842,6 +906,55 @@ ${progress?.fileName ? `- 学习文件：${progress.fileName}` : ''}
           // 重新加载学习材料（可能解锁了新的文件）
           await loadMaterials();
           
+          // 🎯 检查是否有下一个推荐文件
+          if (response.data.nextFileRecommendation) {
+            const nextFile = response.data.nextFileRecommendation;
+            
+            // 如果下一个文件有多个标签，让用户选择
+            if (nextFile.tags && nextFile.tags.length > 1) {
+              Modal.confirm({
+                title: '选择学习路径',
+                content: (
+                  <div>
+                    <p>《{nextFile.name}》属于多个学习标签，请选择您想要继续的学习路径：</p>
+                    <div style={{ marginTop: 16 }}>
+                      {nextFile.tags.map((tag: any) => (
+                        <Button
+                          key={tag.id}
+                          type="primary"
+                          style={{ 
+                            margin: '4px 8px 4px 0', 
+                            backgroundColor: tag.color,
+                            borderColor: tag.color 
+                          }}
+                          onClick={() => {
+                            Modal.destroyAll();
+                            // 自动开始学习这个文件
+                            message.info(`🚀 继续学习推荐的文件："${nextFile.name}" (${tag.name})`);
+                            setTimeout(() => {
+                              startLearning(nextFile.id);
+                            }, 300);
+                          }}
+                        >
+                          {tag.name}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                ),
+                footer: null,
+                closable: true,
+                maskClosable: true
+              });
+            } else {
+              // 单标签或无标签，直接开始学习
+              message.success(`🎯 为您推荐下一个学习文件："${nextFile.name}"`);
+              setTimeout(() => {
+                startLearning(nextFile.id);
+              }, 800);
+            }
+          }
+          
         } else {
           // 测试未通过
           message.warning({
@@ -856,7 +969,7 @@ ${progress?.fileName ? `- 学习文件：${progress.fileName}` : ''}
       console.error('❌ 处理测试结果失败:', error);
       message.error('处理测试结果失败: ' + (error.response?.data?.message || error.message));
     }
-  }, [userId]);
+  }, [userId, loadMaterials, startLearning]);
 
   // 🔧 新增：监听来自测试页面的消息
   useEffect(() => {
@@ -901,6 +1014,9 @@ ${progress?.fileName ? `- 学习文件：${progress.fileName}` : ''}
     if (navigationState?.fromQuiz && navigationState?.recommendedFileId) {
       console.log('🎯 从测试页面接收到推荐文件:', navigationState.recommendedFileId);
       
+      // 清理导航状态，避免重复处理
+      window.history.replaceState({}, document.title);
+      
       // 等待材料加载完成后自动选择推荐的文件
       const selectRecommendedFile = () => {
         const recommendedFile = materials.find(m => m.id === navigationState.recommendedFileId);
@@ -910,14 +1026,11 @@ ${progress?.fileName ? `- 学习文件：${progress.fileName}` : ''}
           
           // 显示推荐提示
           message.info(`🚀 继续学习推荐的文件："${recommendedFile.name}"`);
-            // 自动开始学习这个文件
+          
+          // 自动开始学习这个文件
           setTimeout(() => {
-            setSelectedMaterial(recommendedFile.id);
-            // 需要等待selectedMaterial状态更新后再调用startLearning
-            setTimeout(() => {
-              startLearning();
-            }, 100);
-          }, 1000);
+            startLearning(recommendedFile.id);
+          }, 500); // 减少延迟时间
         } else {
           console.log('⚠️ 未找到推荐文件，显示材料选择界面');
           message.warning('推荐的学习文件暂时不可用，请选择其他文件继续学习');
@@ -934,12 +1047,12 @@ ${progress?.fileName ? `- 学习文件：${progress.fileName}` : ''}
             clearInterval(checkMaterials);
             selectRecommendedFile();
           }
-        }, 500);
+        }, 200); // 减少检查间隔
         
-        // 5秒后清理检查，避免无限等待
+        // 3秒后清理检查，避免无限等待
         setTimeout(() => {
           clearInterval(checkMaterials);
-        }, 5000);
+        }, 3000);
       }
     }
   }, [location.state, materials]);
@@ -1453,8 +1566,15 @@ ${progress?.fileName ? `- 学习文件：${progress.fileName}` : ''}
             <div>
               {stageContent.keyPoints.map((point, index) => (
                 <div key={index} style={{ padding: '8px 0', display: 'flex', alignItems: 'flex-start' }}>
-                  <CheckOutlined style={{ color: '#52c41a', marginTop: 4, marginRight: 8 }} />
-                  <Text style={{ fontSize: 15, lineHeight: 1.6 }}>{point}</Text>
+                  <CheckOutlined style={{ color: '#52c41a', marginTop: 4, marginRight: 8, flexShrink: 0 }} />
+                  <div className="markdown-content" style={{ fontSize: 15, lineHeight: 1.6, flex: 1 }}>
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      rehypePlugins={[rehypeHighlight]}
+                    >
+                      {point}
+                    </ReactMarkdown>
+                  </div>
                 </div>
               ))}
             </div>
@@ -1474,14 +1594,18 @@ ${progress?.fileName ? `- 学习文件：${progress.fileName}` : ''}
               fontSize: 15,
               border: '1px solid #f0f0f0'
             }}>
-              <Paragraph style={{ 
+              <div className="markdown-content" style={{ 
                 margin: 0, 
-                whiteSpace: 'pre-wrap',
                 fontSize: 15,
                 color: '#333'
               }}>
-                {stageContent.content}
-              </Paragraph>
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  rehypePlugins={[rehypeHighlight]}
+                >
+                  {stageContent.content}
+                </ReactMarkdown>
+              </div>
             </div>
           </div>
             <div style={{ 
@@ -1736,14 +1860,11 @@ ${progress?.fileName ? `- 学习文件：${progress.fileName}` : ''}
                           )}
                         </div>
                       }                      description={
-                        <div style={{ 
-                          whiteSpace: 'pre-wrap', 
-                          lineHeight: 1.6,
-                          fontSize: isMobile ? 13 : 14,
-                          marginTop: 8 
-                        }}>
-                          {message.content}
-                        </div>
+                        <LearningMessageContent 
+                          content={message.content} 
+                          isUserMessage={message.type === 'user'} 
+                          isMobile={isMobile} 
+                        />
                       }
                     />
                   </div>

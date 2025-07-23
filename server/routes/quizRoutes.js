@@ -1,4 +1,5 @@
 const express = require('express');
+const beijingTime = require('../utils/beijingTime'); // 🕐 北京时间工具
 const router = express.Router();
 const aiService = require('../utils/aiService');
 const database = require('../database/database'); // 🏷️ 新增：数据库操作
@@ -22,7 +23,7 @@ function getUserActiveGeneration(userId) {
 function setUserGenerationStatus(userId, generationInfo) {
   activeGenerations.set(userId, {
     ...generationInfo,
-    startTime: new Date().toISOString(),
+    startTime: beijingTime.toBeijingISOString(),
     status: 'generating'
   });
 }
@@ -64,6 +65,44 @@ router.get('/generation-status/:userId', (req, res) => {
   }
 });
 
+// 🔧 新增：清理用户生成状态接口
+router.post('/clear-generation-status', (req, res) => {
+  try {
+    const { userId } = req.body;
+    
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: '用户ID不能为空'
+      });
+    }
+    
+    const userIdNum = parseInt(userId);
+    if (isNaN(userIdNum)) {
+      return res.status(400).json({
+        success: false,
+        message: '用户ID必须是有效数字'
+      });
+    }
+    
+    // 清理用户的生成状态
+    clearUserGenerationStatus(userIdNum);
+    
+    console.log(`🧹 已清理用户 ${userIdNum} 的生成状态`);
+    
+    res.json({
+      success: true,
+      message: '生成状态已清理'
+    });
+  } catch (error) {
+    console.error('❌ 清理生成状态失败:', error);
+    res.status(500).json({
+      success: false,
+      message: '清理生成状态失败'
+    });
+  }
+});
+
 // 🏷️ 新增：获取可用的测试标签列表 - 使用实时统计
 router.get('/tags', async (req, res) => {
   try {
@@ -92,16 +131,11 @@ router.get('/tags', async (req, res) => {
         
         // 🔧 修复：只有当前有有效文件时才显示标签
         if (validFiles.length > 0) {
-          // 获取标签的学习内容
-          const learningContent = database.tags.getTagLearningContent(tag.id);
+          // 🔧 学习内容功能已移除（数据库表已删除）
+          const learningContent = null;
           
-          // 解析AI分析获取更多信息
-          let aiAnalysis = {};
-          try {
-            aiAnalysis = JSON.parse(learningContent?.ai_analysis || '{}');
-          } catch (parseError) {
-            aiAnalysis = {};
-          }
+          // 🔧 无学习内容时的默认AI分析
+          const aiAnalysis = {};
           
           // 🔔 实时计算文件内容总长度
           let totalContentLength = 0;
@@ -130,7 +164,7 @@ router.get('/tags', async (req, res) => {
             topics: aiAnalysis.topics || ['综合学习'],
             createdAt: tag.created_at,
             contentLength: totalContentLength,
-            lastUpdated: new Date().toISOString(), // 🔔 添加更新时间戳
+            lastUpdated: beijingTime.toBeijingISOString(), // 🔔 添加更新时间戳
             // 推荐题目数量 - 基于实时文件数量
             recommendedQuestions: Math.min(20, Math.max(5, validFiles.length * 3))
           });
@@ -146,7 +180,7 @@ router.get('/tags', async (req, res) => {
       success: true,
       data: availableTags,
       total: availableTags.length,
-      timestamp: new Date().toISOString(), // 🔔 添加响应时间戳
+      timestamp: beijingTime.toBeijingISOString(), // 🔔 添加响应时间戳
       message: availableTags.length > 0 ? 
         `找到 ${availableTags.length} 个可用的测试标签` : 
         '暂无可用的测试标签'
@@ -193,7 +227,7 @@ router.post('/generate-tag', async (req, res) => {
 
     console.log('🏷️ 生成标签测试题目请求:', {
       userId, tagId, count, difficulty, forceRegenerate,
-      timestamp: new Date().toISOString()
+      timestamp: beijingTime.toBeijingISOString()
     });
 
     // 参数验证
@@ -268,14 +302,15 @@ router.post('/generate-tag', async (req, res) => {
     console.log(`📄 标签"${tag.name}"下有${validFiles.length}个有效文件`);
     
     // 🔧 改进：优先使用学习内容，如果没有则动态生成
-    let learningContent = database.tags.getTagLearningContent(parseInt(tagId));
+    // 🔧 学习内容功能已移除（数据库表已删除）
+    const learningContent = null;
     let contentForTest = '';
     
-    if (learningContent && learningContent.merged_content && learningContent.merged_content.length > 200) {
-      contentForTest = learningContent.merged_content;
+    if (false) { // 学习内容已不可用
+      contentForTest = '';
       console.log(`✅ 使用现有的标签学习内容，长度: ${contentForTest.length}字符`);
     } else {
-      console.log(`🔄 标签学习内容不足，动态合并文件内容...`);
+      console.log(`🔄 动态合并文件内容进行测验...`);
       
       // 动态合并文件内容
       let mergedContent = '';
@@ -341,7 +376,10 @@ router.post('/generate-tag', async (req, res) => {
         sourceFiles: validFiles.map(tf => {
           const file = fileDatabase.find(f => f.id === tf.file_id);
           return file ? file.originalName : '未知文件';
-        })
+        }),
+        // 保留AI生成的详细来源信息
+        sourceQuote: q.sourceQuote || '',
+        sourcePosition: q.sourcePosition || `标签"${tag.name}"相关内容`
       }));
 
       // 创建测试会话
@@ -355,7 +393,7 @@ router.post('/generate-tag', async (req, res) => {
         testType: 'tag_comprehensive',
         difficulty: difficulty,
         questions: enrichedQuestions,
-        startTime: new Date().toISOString(),
+        startTime: beijingTime.toBeijingISOString(),
         status: 'active',
         contentSource: 'tag_ai_generated',
         regenerated: forceRegenerate || false,
@@ -381,7 +419,7 @@ router.post('/generate-tag', async (req, res) => {
           questionCount: enrichedQuestions.length,
           fileCount: validFiles.length,
           regenerated: forceRegenerate || false,
-          generatedAt: new Date().toISOString()
+          generatedAt: beijingTime.toBeijingISOString()
         });
       } catch (wsError) {
         console.warn('WebSocket通知发送失败:', wsError);
@@ -427,7 +465,7 @@ router.post('/generate-tag', async (req, res) => {
     console.error('❌ 标签题目生成失败:', {
       error: error.message,
       request: req.body,
-      timestamp: new Date().toISOString()
+      timestamp: beijingTime.toBeijingISOString()
     });
     
     return res.status(500).json({
@@ -448,7 +486,7 @@ router.post('/generate', async (req, res) => {
 
     console.log('📄 生成文件测试题目请求:', {
       userId, fileId, count, difficulty,
-      timestamp: new Date().toISOString()
+      timestamp: beijingTime.toBeijingISOString()
     });
 
     // 🔧 加强参数验证，提供更详细的错误信息
@@ -569,6 +607,18 @@ router.post('/generate', async (req, res) => {
         throw new Error('AI未能生成有效的文件测试题目，请稍后重试');
       }
 
+      // 为文件级题目添加详细来源信息
+      const enrichedQuestions = questionsResult.questions.map(q => ({
+        ...q,
+        isFileQuestion: true,
+        fileId: fileId,
+        fileName: file.originalName,
+        sourceFiles: [file.originalName],
+        // 保留AI生成的详细来源信息
+        sourceQuote: q.sourceQuote || '',
+        sourcePosition: q.sourcePosition || `文件"${file.originalName}"中的相关内容`
+      }));
+
       // 创建测试会话
       const timestamp = Date.now();
       const sessionId = `file_quiz_${userId}_${fileId}_${timestamp}`;
@@ -579,8 +629,8 @@ router.post('/generate', async (req, res) => {
         fileName: file.originalName,
         testType: 'file_comprehensive',
         difficulty: difficulty,
-        questions: questionsResult.questions,
-        startTime: new Date().toISOString(),
+        questions: enrichedQuestions,
+        startTime: beijingTime.toBeijingISOString(),
         status: 'active',
         contentSource: 'file_ai_generated'
       };
@@ -591,7 +641,7 @@ router.post('/generate', async (req, res) => {
       }
       global.quizSessions.set(sessionId, quizSession);
       
-      console.log(`✅ 文件测试会话创建成功: ${sessionId}, 题目数量: ${questionsResult.questions.length}`);
+      console.log(`✅ 文件测试会话创建成功: ${sessionId}, 题目数量: ${enrichedQuestions.length}`);
       
       // 返回响应
       return res.json({
@@ -601,8 +651,8 @@ router.post('/generate', async (req, res) => {
         fileName: file.originalName,
         testType: 'file_comprehensive',
         difficulty: difficulty,
-        questionCount: questionsResult.questions.length,
-        questions: questionsResult.questions.map(q => ({
+        questionCount: enrichedQuestions.length,
+        questions: enrichedQuestions.map(q => ({
           id: q.id,
           type: q.type,
           question: q.question,
@@ -627,7 +677,7 @@ router.post('/generate', async (req, res) => {
     console.error('❌ 文件题目生成失败:', {
       error: error.message,
       request: req.body,
-      timestamp: new Date().toISOString()
+      timestamp: beijingTime.toBeijingISOString()
     });
     
     // 根据错误类型提供更详细的建议
@@ -727,19 +777,15 @@ router.get('/materials', requireAuth, async (req, res) => {
           });
           
           if (validFiles.length > 0) {
-            // 获取标签的学习内容（如果有）
-            const learningContent = database.tags.getTagLearningContent(tag.id);
+            // 🔧 学习内容功能已移除（数据库表已删除）
+            const learningContent = null;
             
             let analysis = {};
             let totalContentLength = 0;
             
-            if (learningContent) {
-              try {
-                analysis = JSON.parse(learningContent.ai_analysis || '{}');
-                totalContentLength = learningContent.merged_content?.length || 0;
-              } catch (parseError) {
-                console.warn(`解析标签 ${tag.id} 学习内容失败:`, parseError);
-              }
+            if (false) { // 学习内容已不可用
+              analysis = {};
+              totalContentLength = 0;
             }
             
             // 计算文件总内容长度
@@ -833,7 +879,7 @@ router.post('/generate-questions', async (req, res) => {
       userIdType: typeof userId,
       tagIdType: typeof tagId,
       countType: typeof count,
-      timestamp: new Date().toISOString()
+      timestamp: beijingTime.toBeijingISOString()
     });
 
     // 🔧 新增：检查用户是否已有正在进行的生成
@@ -1037,7 +1083,7 @@ router.post('/generate-questions', async (req, res) => {
           testType: 'file_comprehensive',
           difficulty: difficulty,
           questions: questionsResult.questions,
-          startTime: new Date().toISOString(),
+          startTime: beijingTime.toBeijingISOString(),
           status: 'active',
           contentSource: 'file_ai_generated'
         };
@@ -1116,11 +1162,12 @@ router.post('/generate-questions', async (req, res) => {
         console.log(`📄 标签"${tag.name}"下有${validFiles.length}个有效文件`);
 
         // 获取学习内容
-        let learningContent = database.tags.getTagLearningContent(parseInt(tagId));
+        // 🔧 学习内容功能已移除（数据库表已删除）
+        const learningContent = null;
         let contentForTest = '';
         
-        if (learningContent && learningContent.merged_content && learningContent.merged_content.length > 200) {
-          contentForTest = learningContent.merged_content;
+        if (false) { // 学习内容已不可用
+          contentForTest = '';
           console.log(`✅ 使用现有的标签学习内容，长度: ${contentForTest.length}字符`);
         } else {
           console.log(`🔄 动态合并文件内容...`);
@@ -1182,7 +1229,7 @@ router.post('/generate-questions', async (req, res) => {
           testType: 'tag_comprehensive',
           difficulty: difficulty,
           questions: enrichedQuestions,
-          startTime: new Date().toISOString(),
+          startTime: beijingTime.toBeijingISOString(),
           status: 'active',
           contentSource: 'tag_ai_generated',
           regenerated: forceRegenerate || false,
@@ -1238,7 +1285,7 @@ router.post('/generate-questions', async (req, res) => {
       error: error.message,
       stack: error.stack,
       request: req.body,
-      timestamp: new Date().toISOString()
+      timestamp: beijingTime.toBeijingISOString()
     });
     
     return res.status(500).json({
@@ -1500,8 +1547,11 @@ router.post('/submit', async (req, res) => {
         questionType: question.type,
         options: question.options,
         isUnanswered: isUnanswered,
-        // 🏷️ 为标签测试添加来源文件信息
-        sourceFiles: question.sourceFiles || question.isTagQuestion ? [session.tagName] : [session.fileName]
+        // 🔧 增强来源信息显示
+        sourceFiles: question.sourceFiles || question.isTagQuestion ? [session.tagName] : [session.fileName],
+        sourceQuote: question.sourceQuote || '', // 原文引用
+        sourcePosition: question.sourcePosition || '', // 来源位置
+        enhancedExplanation: generateEnhancedExplanation(question, isCorrect, explanation)
       });
     }
 
@@ -1510,7 +1560,7 @@ router.post('/submit', async (req, res) => {
 
     // 更新会话状态
     session.status = 'completed';
-    session.endTime = new Date().toISOString();
+    session.endTime = beijingTime.toBeijingISOString();
     session.results = {
       finalScore,
       accuracy,
@@ -1529,7 +1579,7 @@ router.post('/submit', async (req, res) => {
       sessionId,
       answers,
       results: session.results,
-      submittedAt: new Date().toISOString()
+      submittedAt: beijingTime.toBeijingISOString()
     });
 
     const testTypeName = session.testType === 'tag_comprehensive' ? '标签综合测试' : '文件测试';
@@ -1555,6 +1605,50 @@ router.post('/submit', async (req, res) => {
       console.warn('WebSocket通知发送失败:', wsError);
     }
 
+    // 🔧 新增：如果是文件测试且分数≥80，自动保存学习进度到数据库
+    let progressSaved = false;
+    if (session.testType === 'file_test' && session.fileId && finalScore >= 80) {
+      try {
+        console.log('💾 自动保存学习进度到数据库...', {
+          userId: session.userId,
+          fileId: session.fileId,
+          testScore: finalScore
+        });
+        
+        // 调用数据库保存方法
+        const saveResult = database.learningProgress.saveFileProgress(
+          session.userId,
+          session.fileId,
+          session.totalStages || 3, // 当前阶段设为总阶段数（完成）
+          session.totalStages || 3, // 总阶段数
+          true, // 已完成
+          finalScore // 测试分数
+        );
+
+        console.log('💾 学习进度自动保存结果:', saveResult);
+        progressSaved = true;
+
+        // 发送学习完成通知
+        try {
+          webSocketService.notifyLearningProgress(session.userId, {
+            type: 'learning_completed_with_test',
+            fileId: session.fileId,
+            fileName: session.fileName,
+            testScore: finalScore,
+            passed: true,
+            completedAt: session.endTime
+          });
+        } catch (wsError2) {
+          console.warn('学习完成WebSocket通知发送失败:', wsError2);
+        }
+
+        console.log(`✅ 学习进度已自动保存: 用户${session.userId}, 文件${session.fileId}, 分数${finalScore}`);
+        
+      } catch (saveError) {
+        console.error('❌ 自动保存学习进度失败:', saveError);
+      }
+    }
+
     res.json({
       success: true,
       data: {
@@ -1573,10 +1667,14 @@ router.post('/submit', async (req, res) => {
           completionTime: calculateCompletionTime(session.startTime, session.endTime),
           // 🏷️ 为标签测试添加额外信息
           isTagTest: session.testType === 'tag_comprehensive',
-          fileCount: session.fileCount || 1
+          fileCount: session.fileCount || 1,
+          // 🔧 新增：学习进度保存状态
+          progressSaved: progressSaved,
+          passed: finalScore >= 80,
+          canProceedToNext: progressSaved && finalScore >= 80
         }
       },
-      message: `${testTypeName}答案提交成功`
+      message: progressSaved ? `恭喜！您以${finalScore}分的成绩完成了《${sourceName}》的学习，进度已保存` : `${testTypeName}答案提交成功`
     });
 
   } catch (error) {
@@ -1780,7 +1878,7 @@ router.post('/deepseek-analysis/:fileId', async (req, res) => {
         fileName: file.originalName,
         analysisType: analysisType,
         result: analysisResult,
-        timestamp: new Date().toISOString()
+        timestamp: beijingTime.toBeijingISOString()
       }
     });
     
@@ -2017,7 +2115,7 @@ router.post('/analyze/:fileId', async (req, res) => {
     file.localAnalysisResult = {
       ...analysisResult,
       analysisType,
-      analyzedAt: new Date().toISOString(),
+      analyzedAt: beijingTime.toBeijingISOString(),
       userId
     };
     
@@ -2095,7 +2193,7 @@ router.post('/batch-analyze', async (req, res) => {
         file.localAnalysisResult = {
           ...analysisResult,
           analysisType,
-          analyzedAt: new Date().toISOString(),
+          analyzedAt: beijingTime.toBeijingISOString(),
           userId
         };
         
@@ -2137,5 +2235,27 @@ router.post('/batch-analyze', async (req, res) => {
     });
   }
 });
+
+// 🔧 新增：生成增强的解释信息，包含详细来源
+function generateEnhancedExplanation(question, isCorrect, baseExplanation) {
+  let enhancedExplanation = baseExplanation;
+  
+  // 添加来源引用信息
+  if (question.sourceQuote && question.sourceQuote.trim()) {
+    enhancedExplanation += `\n\n📖 **原文引用：**\n"${question.sourceQuote}"`;
+  }
+  
+  // 添加位置信息
+  if (question.sourcePosition && question.sourcePosition.trim()) {
+    enhancedExplanation += `\n\n📍 **来源位置：** ${question.sourcePosition}`;
+  }
+  
+  // 添加来源文件信息
+  if (question.sourceFiles && question.sourceFiles.length > 0) {
+    enhancedExplanation += `\n\n📁 **来源文件：** ${question.sourceFiles.join(', ')}`;
+  }
+  
+  return enhancedExplanation;
+}
 
 module.exports = router;

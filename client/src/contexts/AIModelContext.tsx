@@ -19,19 +19,20 @@ interface AIModelContextType {
 
 const AIModelContext = createContext<AIModelContextType | undefined>(undefined);
 
-export const useAIModel = () => {
+export function useAIModel() {
   const context = useContext(AIModelContext);
   if (context === undefined) {
     throw new Error('useAIModel must be used within an AIModelProvider');
   }
   return context;
-};
+}
 
 interface AIModelProviderProps {
   children: React.ReactNode;
+  userLoggedIn?: boolean;
 }
 
-export const AIModelProvider: React.FC<AIModelProviderProps> = ({ children }) => {
+export const AIModelProvider: React.FC<AIModelProviderProps> = ({ children, userLoggedIn = false }) => {
   const [isAIEnabled, setIsAIEnabled] = useState(true);
   const [currentModel, setCurrentModel] = useState<AIModel>('local');
   const [isDeepSeekAvailable, setIsDeepSeekAvailable] = useState(false);
@@ -88,6 +89,11 @@ export const AIModelProvider: React.FC<AIModelProviderProps> = ({ children }) =>
   }, []);
 
   const checkForUpdates = useCallback(async (): Promise<boolean> => {
+    // 只在用户已登录时才检查更新
+    if (!userLoggedIn) {
+      return false;
+    }
+    
     try {
       const response = await axios.get('/api/system/ai-settings-version');
       if (response.data.success) {
@@ -106,15 +112,18 @@ export const AIModelProvider: React.FC<AIModelProviderProps> = ({ children }) =>
       console.error('❌ 检查AI设置更新失败:', error);
       return false;
     }
-  }, [settingsVersion]);
+  }, [settingsVersion, userLoggedIn]);
 
   useEffect(() => {
     const initializeSettings = async () => {
-      setIsInitialized(true);
-      await checkForUpdates();
+      // 只在用户已登录时才初始化设置
+      if (userLoggedIn) {
+        setIsInitialized(true);
+        await checkForUpdates();
+      }
     };
     initializeSettings();
-  }, [checkForUpdates]);
+  }, [checkForUpdates, userLoggedIn]);
 
   const handleAIEnabledChange = (enabled: boolean) => {
     setIsAIEnabled(enabled);

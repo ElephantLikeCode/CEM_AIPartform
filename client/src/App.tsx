@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { Layout, Menu, Button, Dropdown, message, Spin, Avatar, Drawer } from 'antd';
-import { DatabaseOutlined, BookOutlined, QuestionCircleOutlined, UserOutlined, LogoutOutlined, SafetyOutlined, BulbOutlined, MenuOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons';
+import { DatabaseOutlined, BookOutlined, QuestionCircleOutlined, UserOutlined, LogoutOutlined, SafetyOutlined, BulbOutlined, MenuOutlined, MenuFoldOutlined, MenuUnfoldOutlined, HistoryOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
+import { useAuth } from './contexts/AuthContext';
 import axios from 'axios';
+import './utils/axiosConfig'; // 🔧 导入axios全局配置
 import './App.css';
 import './styles/theme.css';
 
@@ -18,9 +20,12 @@ import QAPage from './pages/QAPage';
 import AdminLearningProgressPage from './pages/AdminLearningProgressPage';
 import AdminFileVisibilityPage from './pages/AdminFileVisibilityPage';
 import AdminTagFileOrderPage from './pages/AdminTagFileOrderPage';
+import MyLearningRecordsPage from './pages/MyLearningRecordsPage';
+import UserSettingsPage from './pages/UserSettingsPage';
 import LanguageSwitcher from './components/LanguageSwitcher';
-import { GenerationProvider, useGeneration } from './contexts/GenerationContext';
+import { GenerationProvider, useGeneration, GenerationLock } from './contexts/GenerationContext';
 import { AIModelProvider } from './contexts/AIModelContext';
+import { AuthProvider } from './contexts/AuthContext';
 import DatabaseUserPage from './pages/DatabaseUserPage';
 import AppFooter from './components/AppFooter'; // 引入Footer
 
@@ -41,18 +46,22 @@ interface MenuItem {
 
 const AppContent: React.FC = () => {
   const { t } = useTranslation();
+  const { userLoggedIn, userRole, authChecking, checkLoginStatus, logout } = useAuth();
   const [apiStatus, setApiStatus] = useState<string>('Checking...');
-  const [userLoggedIn, setUserLoggedIn] = useState<boolean>(false);
-  const [userRole, setUserRole] = useState<string>('user');
   const [loggingOut, setLoggingOut] = useState<boolean>(false);
-  const [authChecking, setAuthChecking] = useState<boolean>(false); // 添加认证检查状态
-  
-  // 🔧 新增：移动端状态管理
-  const [isMobile, setIsMobile] = useState<boolean>(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
   
   const navigate = useNavigate();
   const location = useLocation();
+  
+  // 🔧 新增：移动端状态管理 - 初始化时立即检测屏幕尺寸
+  const [isMobile, setIsMobile] = useState<boolean>(() => {
+    // 在组件初始化时立即检测屏幕尺寸，避免刷新时的布局闪烁
+    return typeof window !== 'undefined' ? window.innerWidth < 1200 : false;
+  });
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean | undefined>(() => {
+    // 根据初始屏幕尺寸设置侧边栏状态
+    return typeof window !== 'undefined' ? window.innerWidth < 1200 : undefined;
+  });
   
   // 🔧 新增：生成状态管理
   const { isGenerationLocked, generationState } = useGeneration();  // 🔧 新增：检测移动端设备
@@ -69,10 +78,8 @@ const AppContent: React.FC = () => {
         // 移动端/平板端：强制收起，使用抽屉模式
         setSidebarCollapsed(true);
       } else if (desktop) {
-        // 桌面端：如果之前没有设置过，默认展开；否则保持用户选择
-        if (sidebarCollapsed === undefined || window.innerWidth > 1400) {
-          setSidebarCollapsed(false);
-        }
+        // 桌面端：默认展开侧边栏
+        setSidebarCollapsed(false);
       }
     };
     
@@ -99,62 +106,33 @@ const AppContent: React.FC = () => {
       });
   }, []); // 空依赖数组，只执行一次
 
-  // 检查用户登录状态 - 仅在非公共页面上执行
-  useEffect(() => {
-    const checkAuth = async () => {
-      if (authChecking) return; // 防止重复检查
-    
-      setAuthChecking(true);
-      try {
-        const response = await axios.get('/api/auth/check-login', { withCredentials: true });
-        setUserLoggedIn(response.data.loggedIn);
-        setUserRole(response.data.role || 'user');
-        
-        // 如果用户未登录且不在公共页面，重定向到登录页面并显示提示
-        if (!response.data.loggedIn && !isPublicPage) {
-          message.warning(t('auth.sessionExpired'));
-          navigate('/login', { replace: true });
-        }
-      } catch (error) {
-        console.error('检查登录状态失败:', error);
-        setUserLoggedIn(false);
-        setUserRole('user');
-        
-        // 网络或服务器错误时，重定向到登录页面
-        if (!isPublicPage) {
-          message.error(t('auth.sessionExpired'));
-          navigate('/login', { replace: true });
-        }
-      } finally {
-        setAuthChecking(false);
-      }
-    };
-
-    if (!isPublicPage) {
-      checkAuth();
-    }
-  }, [location.pathname, isPublicPage]); // 依赖于路径和是否为公共页面
+  // 🔧 移除重复的会话检查 - 现在完全由 AuthContext 处理
+  // useEffect(() => {
+  //   if (!isPublicPage) {
+  //     checkLoginStatus();
+  //   }
+  // }, [location.pathname, isPublicPage, checkLoginStatus]);
 
   // 登出处理函数
   const handleLogout = async () => {
     setLoggingOut(true);
     try {
-      const response = await axios.post('/api/auth/logout', {}, { withCredentials: true });      if (response.data.success) {
-        message.success(t('auth.logoutSuccess'));
-        setUserLoggedIn(false);
-        setUserRole('user');
-        navigate('/welcome');
-      } else {
-        throw new Error(response.data.message || '登出失败');
-      }
-    } catch (error: any) {
-      message.error(error.response?.data?.message || error.message || '登出失败');
+      await logout();
+    } catch (error) {
+      // 错误处理已在 AuthContext 中处理
     } finally {
       setLoggingOut(false);
     }
   };
+  
   const userMenu = {
     items: [
+      {
+        key: 'settings',
+        icon: <UserOutlined />,
+        label: '个人设置',
+        onClick: () => navigate('/settings')
+      },
       {
         key: 'logout',
         icon: <LogoutOutlined />,
@@ -171,6 +149,7 @@ const AppContent: React.FC = () => {
     if (path === '/database') return 'database';
     if (path === '/users') return 'users';
     if (path === '/learning') return 'learning';
+    if (path === '/my-records') return 'my-records';
     if (path === '/qa') return 'qa';
     if (path === '/quiz-menu' || path === '/quiz') return 'quiz';
     if (path === '/admin/learning-progress') return 'admin-learning-progress';
@@ -244,7 +223,14 @@ const AppContent: React.FC = () => {
         icon: <BookOutlined />,
         label: t('nav.learning'),
         onClick: () => handleNavigation('/learning')
-      },      {
+      },
+      {
+        key: 'my-records',
+        icon: <HistoryOutlined />,
+        label: '我的学习记录',
+        onClick: () => handleNavigation('/my-records')
+      },
+      {
         key: 'qa',
         icon: <BulbOutlined />,
         label: t('menu.aiQA'),
@@ -292,24 +278,28 @@ const AppContent: React.FC = () => {
   }
 
   return (
-    <Layout style={{ minHeight: '100vh' }}>
-      <Header style={{ 
-        color: 'white', 
-        fontSize: isMobile ? '18px' : '22px',
-        fontWeight: 'bold', 
-        display: 'flex', 
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        height: '72px',
-        background: 'linear-gradient(135deg, #1890ff 0%, #096dd9 100%)',
-        boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        zIndex: 1000,
-        padding: isMobile ? '0 12px' : '0 24px'
-      }}>        <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? '8px' : '16px' }}>
+    <GenerationLock>
+      <Layout style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+        <Header style={{ 
+          color: 'white', 
+          fontSize: isMobile ? '18px' : '22px',
+          fontWeight: 'bold', 
+          display: 'flex', 
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          height: '72px',
+          background: 'linear-gradient(135deg, #1890ff 0%, #096dd9 100%)',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+          position: 'fixed', /* 固定定位 */
+          top: 0,
+          left: 0,
+          width: '100%',
+          zIndex: 1000,
+          padding: isMobile ? '0 12px' : '0 24px',
+          boxSizing: 'border-box'
+        }}>
+          {/* Header content remains the same */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? '8px' : '16px' }}>
           <img 
             src="https://www.cem-macau.com/_nuxt/img/logo.5ab12fa.svg" 
             alt="CEM Logo"
@@ -425,25 +415,27 @@ const AppContent: React.FC = () => {
           )}
         </div>
       </Header>
-      <Layout style={{ marginTop: '72px' }}>
-        {/* 桌面端侧边栏 */}
+      <Layout style={{ display: 'flex', flexDirection: 'row', marginTop: '72px' }}>
+        {/* Sider remains the same */}
         {!isMobile && (
           <Sider 
             width={240}
             collapsedWidth={0}
-            collapsed={sidebarCollapsed}
+            collapsed={sidebarCollapsed ?? false}
             style={{ 
               background: '#fff',
               boxShadow: '2px 0 8px rgba(0,0,0,0.06)',
               borderRight: '1px solid #f0f0f0',
-              position: 'fixed',
+              transition: 'width 0.2s ease',
+              overflow: 'hidden',
+              position: 'fixed', /* 固定定位 */
+              top: '72px', /* 在Header下方 */
               left: 0,
-              top: '72px',
-              bottom: 0,
-              zIndex: 999,
-              transition: 'width 0.2s ease'
+              height: 'calc(100vh - 72px)', /* 高度为viewport减去Header高度 */
+              zIndex: 999
             }}
           >
+            {/* Sider content remains the same */}
             <div style={{ 
               padding: '24px 16px 16px',
               borderBottom: '1px solid #f0f0f0',
@@ -514,9 +506,10 @@ const AppContent: React.FC = () => {
           }
           placement="left"
           onClose={() => setSidebarCollapsed(true)}
-          open={isMobile && !sidebarCollapsed}
+          open={isMobile && sidebarCollapsed === false}
           styles={{ body: { padding: 0 } }}
           width={280}
+          style={{ zIndex: 1100 }} /* 确保抽屉在Header之上 */
         >
           <Menu
             mode="inline"
@@ -543,21 +536,28 @@ const AppContent: React.FC = () => {
             }))}
           />
         </Drawer>
+
         <Layout 
-          className={sidebarCollapsed ? 'sidebar-collapsed' : ''}
+          className={(sidebarCollapsed ?? false) ? 'sidebar-collapsed' : ''}
           style={{ 
             background: '#f5f5f5', 
-            marginLeft: isMobile || sidebarCollapsed ? '0' : '240px',
-            minHeight: 'calc(100vh - 72px)',
+            display: 'flex',
+            flexDirection: 'column',
+            marginLeft: !isMobile ? ((sidebarCollapsed ?? false) ? '0' : '240px') : '0', /* 为固定侧边栏留出空间 */
+            minHeight: 'calc(100vh - 72px)', /* 减去Header高度，让Layout占满剩余空间 */
+            overflow: 'hidden', /* 隐藏超出部分，防止整个layout滚动 */
             transition: 'margin-left 0.2s ease'
           }}>
           <Content 
             className="page-container" 
             style={{ 
-              padding: isMobile ? '16px 12px' : (sidebarCollapsed ? '24px' : '24px'),
-              height: 'calc(100vh - 72px)',
-              overflow: 'auto',
-              width: '100%'
+              padding: isMobile ? '16px 12px' : '32px 24px',
+              width: '100%',
+              maxWidth: isMobile ? '100%' : '1600px', /* 大屏幕下更宽 */
+              margin: '0 auto', // Center content
+              flex: '1 1 auto', /* 允许收缩和增长 */
+              overflowY: 'auto', /* 仅Y轴滚动 */
+              overflowX: 'hidden' /* 禁止X轴滚动 */
             }}
           >
             <Routes>
@@ -599,6 +599,26 @@ const AppContent: React.FC = () => {
                 element={
                   <ProtectedRoute>
                     <LearningPage />
+                  </ProtectedRoute>
+                } 
+              />
+              
+              {/* 我的学习记录页面 - 所有登录用户可以访问 */}
+              <Route 
+                path="/my-records" 
+                element={
+                  <ProtectedRoute>
+                    <MyLearningRecordsPage />
+                  </ProtectedRoute>
+                } 
+              />
+              
+              {/* 用户设置页面 - 所有登录用户可以访问 */}
+              <Route 
+                path="/settings" 
+                element={
+                  <ProtectedRoute>
+                    <UserSettingsPage />
                   </ProtectedRoute>
                 } 
               />
@@ -674,27 +694,46 @@ const AppContent: React.FC = () => {
               <Route path="*" element={<Navigate to="/welcome" replace />} />
             </Routes>
           </Content>
-          <AppFooter />
+          {/* Footer固定在Layout底部 */}
+          {userLoggedIn && !isPublicPage && (
+            <div style={{ 
+              flexShrink: 0,
+              // marginTop: 'auto' /*不再需要，因为父级是固定高度*/
+            }}>
+              <AppFooter />
+            </div>
+          )}
         </Layout>
       </Layout>
     </Layout>
+    </GenerationLock>
+  );
+};
+
+const AppWithProviders: React.FC = () => {
+  const { userLoggedIn } = useAuth();
+  
+  return (
+    <AIModelProvider userLoggedIn={userLoggedIn}>
+      <GenerationProvider>
+        <AppContent />
+      </GenerationProvider>
+    </AIModelProvider>
   );
 };
 
 const App: React.FC = () => {
   return (
-    <AIModelProvider>
-      <GenerationProvider>
-        <Router
-          future={{
-            v7_startTransition: true,
-            v7_relativeSplatPath: true
-          }}
-        >
-          <AppContent />
-        </Router>
-      </GenerationProvider>
-    </AIModelProvider>
+    <Router
+      future={{
+        v7_startTransition: true,
+        v7_relativeSplatPath: true
+      }}
+    >
+      <AuthProvider>
+        <AppWithProviders />
+      </AuthProvider>
+    </Router>
   );
 };
 

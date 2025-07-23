@@ -1,43 +1,81 @@
 .app-footer {
-  background-color: #001529;
-  color: rgba(255, 255, 255, 0.65);
-  padding: 20px 50px;
+  background-color: #fafafa; /* 浅灰色背景 */
+  color: rgba(0, 0, 0, 0.85); /* 深色文本 */
+  padding: 20px 24px; /* 增加垂直内边距 */
   text-align: center;
+  border-top: 1px solid #f0f0f0; /* 添加一个上边框以示区分 */
+  position: relative; /* 改为相对定位 */
+  width: 100%; /* 全宽 */
+  margin-top: auto; /* 推到容器底部 */
+  box-sizing: border-box; /* 包含padding和border */
 }
 
 .footer-container {
-  max-width: 1200px;
+  max-width: 1400px; /* 增加最大宽度以适应大屏幕 */
   margin: 0 auto;
+  width: 100%;
 }
 
 .social-icon {
-  font-size: 24px;
-  color: rgba(255, 255, 255, 0.65);
+  font-size: 20px; /* 稍微减小图标大小 */
+  color: rgba(0, 0, 0, 0.85);
   transition: color 0.3s;
 }
 
 .social-icon:hover {
-  color: #fff;
+  color: #1890ff; /* antd 主题色 */
 }
 
 .footer-links {
-  margin-top: 16px;
+  margin-top: 0; /* 移除顶部边距，因为现在所有内容都在一行 */
 }
 
 .footer-link {
-  color: rgba(255, 255, 255, 0.65);
+  color: rgba(0, 0, 0, 0.85);
   transition: color 0.3s;
+  font-size: 14px;
 }
 
 .footer-link:hover {
-  color: #fff;
+  color: #1890ff; /* antd 主题色 */
 }
 
 .footer-copyright {
-  margin-top: 16px;
+  margin-top: 12px;
 }
 
 .copyright-text {
-  color: rgba(255, 255, 255, 0.45);
+  color: rgba(0, 0, 0, 0.45);
   font-size: 12px;
+  word-break: break-word;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .app-footer {
+    padding: 16px 12px;
+  }
+  
+  .footer-container {
+    max-width: 100%;
+  }
+  
+  .footer-link {
+    font-size: 12px;
+  }
+  
+  .copyright-text {
+    font-size: 10px;
+  }
+  
+  .social-icon {
+    font-size: 18px;
+  }
+}
+
+/* 大屏幕适配 */
+@media (min-width: 1200px) {
+  .footer-container {
+    max-width: 1600px; /* 大屏幕下更宽 */
+  }
 }

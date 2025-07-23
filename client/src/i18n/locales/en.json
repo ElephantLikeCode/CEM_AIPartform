@@ -77,7 +77,8 @@
     "termsAndConditions": "Terms and Conditions",
     "privacyPolicy": "Privacy Policy",
     "agreeTerms": "By logging in, you agree to our",
-    "and": "and"
+    "and": "and",
+    "sessionExpired": "Session expired, please login again"
   },  "database": {
     "title": "Knowledge Base Management",
     "user_title": "My Library",
@@ -128,7 +129,6 @@
     "description": "Course Description",
     "objectives": "Learning Objectives",
     "estimatedTime": "Estimated Time",
-    "difficulty": "Difficulty Level",
     "beginner": "Beginner",
     "intermediate": "Intermediate",
     "advanced": "Advanced",
@@ -213,7 +213,6 @@
     "serverError": "Server error",
     "notFound": "Page not found",
     "accessDenied": "Access denied",
-    "sessionExpired": "Session expired, please login again",
     "unexpectedError": "An unexpected error occurred",
     "tryAgain": "Please try again",
     "contactSupport": "If the problem persists, please contact technical support"

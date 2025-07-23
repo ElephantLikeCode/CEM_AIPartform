@@ -1,4 +1,5 @@
 const express = require('express');
+const beijingTime = require('../utils/beijingTime'); // 🕐 北京时间工具
 const router = express.Router();
 const aiService = require('../utils/aiService');
 const path = require('path');
@@ -48,7 +49,7 @@ router.get('/health', async (req, res) => {
       data: {
         aiService: isAvailable ? 'ready' : 'unavailable',
         model: aiService.model,
-        timestamp: new Date().toISOString()
+        timestamp: beijingTime.toBeijingISOString()
       }
     });
   } catch (error) {
@@ -157,7 +158,7 @@ router.post('/chat', async (req, res) => {
         success: true,
         data: {
           response: response.message.content.trim(),
-          timestamp: new Date().toISOString(),
+          timestamp: beijingTime.toBeijingISOString(),
           relevantChunks: 0,
           ragEnhanced: false,
           fallback: true
@@ -361,7 +362,7 @@ router.post('/generate-questions', async (req, res) => {
       error: error.message,
       details: {
         suggestion: '请检查AI服务状态、学习内容质量或稍后重试',
-        timestamp: new Date().toISOString()
+        timestamp: beijingTime.toBeijingISOString()
       }
     });
   }
@@ -448,60 +449,107 @@ router.post('/chat-with-model', async (req, res) => {
         });
       }
         // 使用DeepSeek进行问答
-      // 🔧 修复：正确处理context对象，避免[object Object]问题
+      // 🔧 修复：DeepSeek也应该使用RAG增强来获取相关内容
+      let contextForRAG = null;
+      if (context && typeof context === 'object') {
+        contextForRAG = {
+          learningType: context.learningType || 'file',
+          fileName: context.fileName,
+          tagName: context.tagName,
+          currentStage: context.currentStage,
+          totalStages: context.totalStages,
+          stageContent: context.stageContent
+        };
+      }
+      
+      // 先使用RAG获取相关内容
+      const ragService = require('../utils/ragService');
+      const relevantContent = await ragService.retrieveRelevantContent(question, contextForRAG);
+      
+      console.log(`🔍 DeepSeek RAG检索到 ${relevantContent.length} 个相关内容块`);
+      
+      // 构建包含RAG内容的context文本
       let contextText = '无特定上下文';
       
       if (context) {
-        if (typeof context === 'string') {
-          contextText = context;
-        } else if (typeof context === 'object') {
-          // 将context对象转换为可读的文本格式
-          const parts = [];
-          if (context.learningType) parts.push(`学习类型: ${context.learningType}`);
-          if (context.fileName) parts.push(`文件: ${context.fileName}`);
-          if (context.tagName) parts.push(`标签: ${context.tagName}`);
-          if (context.currentStage && context.totalStages) {
-            parts.push(`当前学习阶段: ${context.currentStage}/${context.totalStages}`);
-          }
-          if (context.stageTitle) parts.push(`阶段标题: ${context.stageTitle}`);
-          if (context.stageContent) {
-            const contentPreview = typeof context.stageContent === 'string' 
-              ? context.stageContent.substring(0, 500) + (context.stageContent.length > 500 ? '...' : '')
-              : '学习内容概要';
-            parts.push(`学习内容: ${contentPreview}`);
-          }
-          if (context.keyPoints && Array.isArray(context.keyPoints)) {
-            parts.push(`关键点: ${context.keyPoints.slice(0, 3).join(', ')}`);
-          }
-          
-          contextText = parts.length > 0 ? parts.join('\n') : '当前学习内容';
+        const parts = [];
+        if (context.learningType) parts.push(`学习类型: ${context.learningType}`);
+        if (context.fileName) parts.push(`文件: ${context.fileName}`);
+        if (context.tagName) parts.push(`标签: ${context.tagName}`);
+        if (context.currentStage && context.totalStages) {
+          parts.push(`当前学习阶段: ${context.currentStage}/${context.totalStages}`);
         }
+        if (context.stageTitle) parts.push(`阶段标题: ${context.stageTitle}`);
+        if (context.stageContent) {
+          const contentPreview = typeof context.stageContent === 'string' 
+            ? context.stageContent.substring(0, 500) + (context.stageContent.length > 500 ? '...' : '')
+            : '学习内容概要';
+          parts.push(`学习内容: ${contentPreview}`);
+        }
+        if (context.keyPoints && Array.isArray(context.keyPoints)) {
+          parts.push(`关键点: ${context.keyPoints.slice(0, 3).join(', ')}`);
+        }
+        
+        contextText = parts.length > 0 ? parts.join('\n') : '当前学习内容';
       }
       
-      const chatPrompt = `作为AI学习助手，请回答学生的问题。
+      // 🔧 添加RAG检索的相关内容 - 使用改进的格式
+      if (relevantContent && relevantContent.length > 0) {
+        contextText += '\n\n【相关学习材料】\n';
+        relevantContent.forEach((content, index) => {
+          contextText += `文档：《${content.fileName}》\n`;
+          contextText += `内容：${content.content}\n`;
+          contextText += `${'='.repeat(50)}\n`;
+        });
+      }
+      
+      const chatPrompt = `作为AI学习助手，请基于提供的学习材料回答学生的问题。
 
 学习上下文：
 ${contextText}
 
 学生问题：${question}
 
-请提供准确、详细且有教育意义的回答，帮助学生理解相关概念。`;
+【回答要求】
+1. 仅基于提供的学习材料内容回答
+2. 在回答中明确说明信息来自哪个文档，例如："根据《XXX文档》中的内容..."
+3. 不要使用"参考内容1"、"材料2"等编号来引用，要直接说明文档名称
+4. 确保回答准确且有针对性
+5. 如果学习材料中没有相关信息，请明确说明
 
-      response = await deepseekService.chat(chatPrompt);
+请提供基于学习材料的详细回答：`;
+
+      const deepseekResponse = await deepseekService.chat(chatPrompt);
+      
+      // 🔧 构建与RAG服务相同格式的响应
+      response = {
+        response: deepseekResponse,
+        relevantChunks: relevantContent.length,
+        ragEnhanced: true,
+        model: 'deepseek'
+      };
       
     } else {
       // 使用本地模型和RAG
       console.log('🔍 使用本地模型和RAG系统');
       
-      // 使用RAG增强的AI服务
-      response = await ragService.processQuestion(question, {
-        userId,
-        context,
-        stage
-      });
+      // 🔧 修复：使用正确的RAG方法，并传递完整的上下文
+      let contextForRAG = null;
+      if (context && typeof context === 'object') {
+        contextForRAG = {
+          learningType: context.learningType || 'file',
+          fileName: context.fileName,
+          tagName: context.tagName,
+          currentStage: context.currentStage,
+          totalStages: context.totalStages,
+          stageContent: context.stageContent
+        };
+      }
+      
+      response = await ragService.generateRAGResponse(question, contextForRAG);
     }
 
-    const timestamp = new Date().toISOString();
+    const timestamp = beijingTime.toBeijingISOString();
     
     console.log('✅ AI聊天完成');
     
@@ -509,11 +557,11 @@ ${contextText}
       success: true,
       message: 'AI对话成功',
       data: {
-        response: response.answer || response,
+        response: response.response || response,
         timestamp: timestamp,
         model: model,
-        ragEnhanced: response.ragEnhanced || false,
-        relevantChunks: response.relevantChunks || [],
+        ragEnhanced: response.ragEnhanced || (model === 'local'),
+        relevantChunks: response.relevantChunks || 0,
         fallback: response.fallback || false
       }
     });

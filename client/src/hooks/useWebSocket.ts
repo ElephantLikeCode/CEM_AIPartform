@@ -71,81 +71,99 @@ export const useWebSocket = (options: UseWebSocketOptions = {}) => {
       return;
     }
 
-    setState(prev => ({ ...prev, connecting: true, error: null }));
+    // 初始连接延迟，给服务器时间启动
+    const connectDelay = reconnectAttemptsRef.current === 0 ? 100 : 0;
+    
+    const doConnect = () => {
+      setState(prev => ({ ...prev, connecting: true, error: null }));
 
-    try {
-      const wsUrl = `${url}?token=${encodeURIComponent(token)}`;
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
+      try {
+        const wsUrl = `${url}?token=${encodeURIComponent(token)}`;
+        const ws = new WebSocket(wsUrl);
+        wsRef.current = ws;
 
-      ws.onopen = () => {
-        console.log('WebSocket连接已建立');
-        setState(prev => ({
-          ...prev,
-          connected: true,
-          connecting: false,
-          error: null,
-          reconnectAttempts: 0
-        }));
-        reconnectAttemptsRef.current = 0;
-        callbacksRef.current.onConnect?.();
-      };
+        ws.onopen = () => {
+          console.log('WebSocket连接已建立');
+          setState(prev => ({
+            ...prev,
+            connected: true,
+            connecting: false,
+            error: null,
+            reconnectAttempts: 0
+          }));
+          reconnectAttemptsRef.current = 0;
+          callbacksRef.current.onConnect?.();
+        };
 
-      ws.onmessage = (event) => {
-        try {
-          const message: WebSocketMessage = JSON.parse(event.data);
-          console.log('WebSocket消息:', message);
-          callbacksRef.current.onMessage?.(message);
-        } catch (error) {
-          console.error('WebSocket消息解析失败:', error);
-        }
-      };
+        ws.onmessage = (event) => {
+          try {
+            const message: WebSocketMessage = JSON.parse(event.data);
+            console.log('WebSocket消息:', message);
+            callbacksRef.current.onMessage?.(message);
+          } catch (error) {
+            console.error('WebSocket消息解析失败:', error);
+          }
+        };
 
-      ws.onclose = (event) => {
-        console.log('WebSocket连接已关闭', event.code, event.reason);
-        setState(prev => ({
-          ...prev,
-          connected: false,
-          connecting: false
-        }));
-        
-        wsRef.current = null;
-        callbacksRef.current.onDisconnect?.();
-
-        // 自动重连
-        if (reconnect && reconnectAttemptsRef.current < maxReconnectAttempts) {
-          const delay = reconnectInterval * Math.pow(1.5, reconnectAttemptsRef.current);
-          console.log(`WebSocket将在${delay}ms后尝试重连 (第${reconnectAttemptsRef.current + 1}次)`);
+        ws.onclose = (event) => {
+          console.log('WebSocket连接已关闭', event.code, event.reason);
+          setState(prev => ({
+            ...prev,
+            connected: false,
+            connecting: false
+          }));
           
-          reconnectTimeoutRef.current = setTimeout(() => {
-            reconnectAttemptsRef.current++;
-            setState(prev => ({ ...prev, reconnectAttempts: reconnectAttemptsRef.current }));
-            connect();
-          }, delay);
-        } else if (reconnect) {
-          setState(prev => ({ ...prev, error: '重连次数已达上限' }));
-        }
-      };
+          wsRef.current = null;
+          callbacksRef.current.onDisconnect?.();
 
-      ws.onerror = (error) => {
-        console.error('WebSocket错误:', error);
+          // 自动重连
+          if (reconnect && reconnectAttemptsRef.current < maxReconnectAttempts) {
+            const delay = reconnectInterval * Math.pow(1.5, reconnectAttemptsRef.current);
+            console.log(`WebSocket将在${delay}ms后尝试重连 (第${reconnectAttemptsRef.current + 1}次)`);
+            
+            reconnectTimeoutRef.current = setTimeout(() => {
+              reconnectAttemptsRef.current++;
+              setState(prev => ({ ...prev, reconnectAttempts: reconnectAttemptsRef.current }));
+              connect();
+            }, delay);
+          } else if (reconnect) {
+            setState(prev => ({ ...prev, error: '重连次数已达上限' }));
+          }
+        };
+
+        ws.onerror = (error) => {
+          // 区分初始连接错误和重连错误
+          const isInitialConnection = reconnectAttemptsRef.current === 0;
+          const errorMessage = isInitialConnection 
+            ? '正在建立连接...' 
+            : 'WebSocket连接错误';
+          
+          console.error('WebSocket错误:', error);
+          setState(prev => ({
+            ...prev,
+            error: errorMessage,
+            connecting: false
+          }));
+          callbacksRef.current.onError?.(error);
+        };
+
+      } catch (error) {
+        console.error('WebSocket连接失败:', error);
         setState(prev => ({
           ...prev,
-          error: 'WebSocket连接错误',
-          connecting: false
+          connecting: false,
+          error: 'WebSocket连接失败'
         }));
-        callbacksRef.current.onError?.(error);
-      };
+      }
+    };
 
-    } catch (error) {
-      console.error('WebSocket连接失败:', error);
-      setState(prev => ({
-        ...prev,
-        connecting: false,
-        error: 'WebSocket连接失败'
-      }));
+    // 如果是初始连接，添加延迟
+    if (connectDelay > 0) {
+      setTimeout(doConnect, connectDelay);
+    } else {
+      doConnect();
     }
-  }, [url, token, reconnect, reconnectInterval, maxReconnectAttempts, state.connecting, state.connected]);
+  }, [url, token, reconnect, reconnectInterval, maxReconnectAttempts, state]);
 
   const disconnect = useCallback(() => {
     if (reconnectTimeoutRef.current) {

@@ -13,6 +13,7 @@ import axios from 'axios';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAIModel } from '../contexts/AIModelContext';
+import { useGeneration } from '../contexts/GenerationContext';
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -37,11 +38,15 @@ interface QuizResult {
   options: string[];
   isUnanswered: boolean;
   sourceFiles?: string[];
+  sourceQuote?: string; // 原文引用
+  sourcePosition?: string; // 来源位置
+  enhancedExplanation?: string; // 增强解释
 }
 
 const QuizPage: React.FC = () => {
   const { t } = useTranslation();
   const { currentModel } = useAIModel(); // 🤖 获取当前AI模型
+  const { startGeneration, stopGeneration, isGenerationLocked } = useGeneration(); // 🔒 生成状态管理
   const navigate = useNavigate();
   const location = useLocation();
   
@@ -69,6 +74,17 @@ const QuizPage: React.FC = () => {
       keyPoints: number;
       tags: any[];
     };
+    // 🔧 新增：标签学习进度
+    tagProgress?: {
+      tagId: string;
+      tagName: string;
+      tagColor?: string;
+      completed: number;
+      total: number;
+      percentage: number;
+      currentPosition: number;
+      isLastInTag: boolean;
+    };
     progress?: {
       completed: number;
       total: number;
@@ -77,9 +93,6 @@ const QuizPage: React.FC = () => {
     message?: string;
   } | null>(null);
   
-  // 防止重复生成题目的标志
-  const isGenerating = useRef(false);
-  
   // 🔧 新增：答题进度保存相关状态
   const [autoSaveEnabled, setAutoSaveEnabled] = useState(true);
   const [lastSaveTime, setLastSaveTime] = useState<Date | null>(null);
@@ -87,6 +100,9 @@ const QuizPage: React.FC = () => {
   
   // 🔧 新增：生成状态检查
   const [checkingGeneration, setCheckingGeneration] = useState(false);
+  
+  // 🔧 新增：防止重复初始化
+  const initializedRef = useRef(false);
   
   const [testInfo, setTestInfo] = useState<{
     name: string;
@@ -166,16 +182,16 @@ const QuizPage: React.FC = () => {
     }
   }, [timeLeft, quizCompleted, loading, sessionId, questions, answers, testInfo]);
   const generateQuestions = async () => {
-    // 防止重复调用
-    if (isGenerating.current) {
+    // 🔒 防止重复调用，使用全局生成锁
+    if (isGenerationLocked() || generating) {
       console.log('🚫 题目生成已在进行中，跳过重复请求');
       return;
     }
     
-    isGenerating.current = true;
     setGenerating(true);
     setError(null);
-      try {      const params = getUrlParams();
+    
+    try {      const params = getUrlParams();
       const { userId, fileId, fileName, tagId, tagName, count, testType, model } = params;
 
       // 🤖 优先使用URL参数中的模型，否则使用context中的模型
@@ -200,6 +216,17 @@ const QuizPage: React.FC = () => {
         }
       }
 
+      // 🔒 启动全局生成锁
+      const { controller, requestId } = startGeneration(
+        actualTestType as 'file' | 'tag',
+        {
+          materialId: actualTestType === 'tag' ? tagId : fileId,
+          name: actualTestType === 'tag' ? tagName : fileName,
+          materialType: actualTestType,
+          userId: parseInt(userId || '1')
+        }
+      );
+
       console.log('🔄 开始生成题目...', {
         testType: actualTestType,
         fileId,
@@ -208,12 +235,16 @@ const QuizPage: React.FC = () => {
         tagName,
         userId,
         count,
-        selectedModel // 🤖 记录选择的模型
-      });      const requestData: any = {
+        selectedModel, // 🤖 记录选择的模型
+        requestId
+      });
+
+      const requestData: any = {
         userId: parseInt(userId || '1'), // 确保是数字
         count: parseInt(count || '8'), // 确保是数字
         difficulty: '中级',
-        model: selectedModel // 🤖 使用选择的AI模型
+        model: selectedModel, // 🤖 使用选择的AI模型
+        requestId // 🔒 添加请求ID
       };
 
       if (actualTestType === 'tag') {
@@ -234,7 +265,9 @@ const QuizPage: React.FC = () => {
 
       console.log('📤 发送题目生成请求:', requestData);
 
-      const response = await axios.post('/api/quiz/generate-questions', requestData);
+      const response = await axios.post('/api/quiz/generate-questions', requestData, {
+        signal: controller.signal // 🔒 添加取消信号
+      });
       
       console.log('📥 题目生成响应:', response.data);
 
@@ -261,8 +294,14 @@ const QuizPage: React.FC = () => {
         throw new Error('生成的题目数量为0');
       }      setQuestions(responseData.questions);
       setSessionId(responseData.sessionId);
+      
+      // 🔧 修复：优先使用后端返回的文件名，确保显示正确的文件名称
+      const displayName = actualTestType === 'tag' 
+        ? (tagName || '学习标签') 
+        : (responseData.fileName || fileName || '学习文件');
+      
       setTestInfo({
-        name: actualTestType === 'tag' ? (tagName || '学习标签') : (fileName || '学习文件'),
+        name: displayName,
         type: actualTestType === 'tag' ? 'tag_comprehensive' : 'comprehensive',
         difficulty: '中级',
         questionCount: responseData.questions.length,
@@ -281,6 +320,63 @@ const QuizPage: React.FC = () => {
 
     } catch (error: any) {
       console.error('❌ 题目生成失败:', error);
+      
+      // 🔧 处理请求被取消的情况
+      if (error.name === 'CanceledError' || error.code === 'ERR_CANCELED') {
+        console.log('🚫 题目生成请求被取消');
+        message.info('题目生成已取消');
+        return;
+      }          // 🔧 处理409冲突错误（正在进行的生成）
+      if (error.response?.status === 409 && error.response?.data?.code === 'GENERATION_IN_PROGRESS') {
+        const activeGeneration = error.response.data.data?.activeGeneration;
+        if (activeGeneration) {
+          console.log('⚠️ 检测到正在进行的题目生成:', activeGeneration);
+          
+          // 显示正在进行的生成信息
+          message.warning({
+            content: `正在生成${activeGeneration.type === 'tag' ? '标签' : '文件'}测试题目，请稍等...`,
+            duration: 5
+          });
+          
+          // 开始轮询生成状态
+          const params = getUrlParams();
+          const userId = parseInt(params.userId || '1');
+          pollGenerationStatus(userId);
+          
+          return;
+        } else {
+          // 如果没有active generation信息，可能是状态不一致，提供强制清理选项
+          console.log('⚠️ 生成状态不一致，显示强制清理选项');
+          
+          Modal.confirm({
+            title: '检测到生成状态异常',
+            content: '系统检测到有正在进行的题目生成，但无法获取详细信息。这可能是由于网络问题或页面刷新导致的。是否要清理生成状态并重新开始？',
+            okText: '清理并重新开始',
+            cancelText: '取消',
+            onOk: async () => {
+              try {
+                const params = getUrlParams();
+                const userId = parseInt(params.userId || '1');
+                
+                // 调用清理API
+                await axios.post('/api/quiz/clear-generation-status', { userId });
+                
+                message.success('生成状态已清理，正在重新生成题目...');
+                
+                // 延迟后重新生成
+                setTimeout(() => {
+                  generateQuestions();
+                }, 1000);
+              } catch (clearError) {
+                console.error('❌ 清理生成状态失败:', clearError);
+                message.error('清理失败，请刷新页面重试');
+              }
+            }
+          });
+          
+          return;
+        }
+      }
       
       let errorMessage = '题目生成失败';
       
@@ -305,6 +401,8 @@ const QuizPage: React.FC = () => {
         suggestion = '请刷新页面重试';
       } else if (errorMessage.includes('参数')) {
         suggestion = '请检查请求参数格式';
+      } else if (errorMessage.includes('正在进行')) {
+        suggestion = '请等待当前生成完成';
       }
 
       setError(`${errorMessage}。${suggestion}`);
@@ -312,11 +410,21 @@ const QuizPage: React.FC = () => {
       message.error({
         content: errorMessage,
         duration: 5
-      });    } finally {
+      });
+
+    } finally {
       setGenerating(false);
-      isGenerating.current = false; // 重置防重复标志
+      stopGeneration(); // 🔒 解除全局生成锁
     }
   };  useEffect(() => {
+    // 🔧 防止重复执行
+    if (initializedRef.current) {
+      console.log('⚠️ useEffect跳过重复执行');
+      return;
+    }
+    
+    initializedRef.current = true;
+    
     // 检查是否从QuizMenuPage传递了预生成的数据
     const navigationState = location.state as any;    if (navigationState?.sessionId && navigationState?.questions) {
       // 使用预生成的数据
@@ -507,6 +615,7 @@ const QuizPage: React.FC = () => {
           hasNext: data.hasMoreFiles,
           nextFile: data.nextFile,
           progress: data.progress,
+          tagProgress: data.tagProgress, // 🔧 新增：标签学习进度
           message: data.message
         });
         
@@ -905,15 +1014,61 @@ const QuizPage: React.FC = () => {
                   borderRadius: 8,
                   border: '1px solid #b3d8ff'
                 }}>
-                  <Text style={{ 
+                  <div style={{ 
                     color: '#1890ff', 
                     fontSize: window.innerWidth <= 768 ? 12 : 13,
-                    lineHeight: 1.5,
-                    display: 'block'
+                    lineHeight: 1.5
                   }}>
                     <span style={{ fontWeight: 600 }}>💡 解析：</span>
-                    {result.explanation}
-                  </Text>
+                    <div style={{ marginTop: 8 }}>
+                      {/* 使用增强解释或原解释 */}
+                      {(result.enhancedExplanation || result.explanation).split('\n').map((line, index) => {
+                        // 处理Markdown格式的显示
+                        if (line.includes('**原文引用：**')) {
+                          return (
+                            <div key={index} style={{ marginTop: 12 }}>
+                              <Text strong style={{ color: '#d4380d' }}>📖 原文引用：</Text>
+                            </div>
+                          );
+                        } else if (line.includes('**来源位置：**')) {
+                          return (
+                            <div key={index} style={{ marginTop: 8 }}>
+                              <Text strong style={{ color: '#52c41a' }}>� 来源位置：</Text>
+                              <Text style={{ marginLeft: 8 }}>{line.replace('📍 **来源位置：** ', '')}</Text>
+                            </div>
+                          );
+                        } else if (line.includes('**来源文件：**')) {
+                          return (
+                            <div key={index} style={{ marginTop: 8 }}>
+                              <Text strong style={{ color: '#1890ff' }}>📁 来源文件：</Text>
+                              <Text style={{ marginLeft: 8 }}>{line.replace('📁 **来源文件：** ', '')}</Text>
+                            </div>
+                          );
+                        } else if (line.startsWith('"') && line.endsWith('"')) {
+                          // 原文引用的内容
+                          return (
+                            <div key={index} style={{ 
+                              marginTop: 4,
+                              padding: '8px 12px',
+                              background: '#fff7e6',
+                              borderLeft: '3px solid #faad14',
+                              borderRadius: 4,
+                              fontStyle: 'italic'
+                            }}>
+                              <Text style={{ color: '#ad6800' }}>{line}</Text>
+                            </div>
+                          );
+                        } else if (line.trim()) {
+                          return (
+                            <div key={index} style={{ marginTop: index > 0 ? 4 : 0 }}>
+                              <Text>{line}</Text>
+                            </div>
+                          );
+                        }
+                        return null;
+                      })}
+                    </div>
+                  </div>
                 </div>
 
                 {/* 来源信息 */}
@@ -984,7 +1139,22 @@ const QuizPage: React.FC = () => {
                   </div>
                 )}
                 
-                {nextLearningRecommendation.progress && (
+                {/* 🔧 优先显示标签学习进度，如果没有则显示总体进度 */}
+                {nextLearningRecommendation.tagProgress ? (
+                  <div style={{ marginBottom: 16 }}>
+                    <Text type="secondary" style={{ fontSize: 13 }}>
+                      {nextLearningRecommendation.tagProgress.tagName}学习进度：
+                      {nextLearningRecommendation.tagProgress.completed}/{nextLearningRecommendation.tagProgress.total} 
+                      ({nextLearningRecommendation.tagProgress.percentage}%)
+                    </Text>
+                    <Progress 
+                      percent={nextLearningRecommendation.tagProgress.percentage} 
+                      size="small" 
+                      style={{ marginTop: 4 }}
+                      strokeColor={nextLearningRecommendation.tagProgress.tagColor || '#1890ff'}
+                    />
+                  </div>
+                ) : nextLearningRecommendation.progress && (
                   <div style={{ marginBottom: 16 }}>
                     <Text type="secondary" style={{ fontSize: 13 }}>
                       学习进度：{nextLearningRecommendation.progress.completed}/{nextLearningRecommendation.progress.total} 
@@ -1006,8 +1176,8 @@ const QuizPage: React.FC = () => {
             direction={window.innerWidth <= 768 ? 'vertical' : 'horizontal'}
             style={{ width: window.innerWidth <= 768 ? '100%' : 'auto' }}
           >
-            {/* 🏆 条件显示：如果有下一个学习文件，优先显示继续学习按钮 */}
-            {nextLearningRecommendation?.hasNext ? (
+            {/* 🏆 条件显示：检查是否有下一个学习文件和是否为标签最后一个文件 */}
+            {nextLearningRecommendation?.hasNext && !nextLearningRecommendation?.tagProgress?.isLastInTag ? (
               <Button 
                 type="primary"
                 size={window.innerWidth <= 768 ? 'middle' : 'large'}
@@ -1033,6 +1203,26 @@ const QuizPage: React.FC = () => {
                 }}
               >
                 � 继续学习下一个文件
+              </Button>
+            ) : nextLearningRecommendation?.tagProgress?.isLastInTag ? (
+              /* 🏆 标签最后一个文件完成时显示特殊按钮 */
+              <Button 
+                type="primary" 
+                size={window.innerWidth <= 768 ? 'middle' : 'large'}
+                onClick={() => navigate('/learning')}
+                style={{
+                  height: window.innerWidth <= 768 ? 40 : 48,
+                  padding: window.innerWidth <= 768 ? '0 24px' : '0 32px',
+                  borderRadius: window.innerWidth <= 768 ? 20 : 24,
+                  fontSize: window.innerWidth <= 768 ? 14 : 16,
+                  background: 'linear-gradient(135deg, #faad14 0%, #ffd53e 100%)',
+                  border: 'none',
+                  boxShadow: '0 4px 15px rgba(250, 173, 20, 0.4)',
+                  width: window.innerWidth <= 768 ? '100%' : 'auto',
+                  maxWidth: window.innerWidth <= 768 ? 280 : 'none'
+                }}
+              >
+                🎉 完成{nextLearningRecommendation.tagProgress.tagName}标签学习
               </Button>
             ) : (
               <Button 

@@ -1,4 +1,5 @@
 const express = require('express');
+const beijingTime = require('../utils/beijingTime'); // 🕐 北京时间工具
 const router = express.Router();
 const database = require('../database/database');
 const aiService = require('../utils/aiService');
@@ -54,7 +55,7 @@ router.get('/', async (req, res) => {
           ...tag,
           fileCount: stats.validFiles, // 使用有效文件数量
           totalFileCount: stats.totalFiles, // 总文件数量（包括未完成的）
-          lastUsed: stats.fileDetails.length > 0 ? new Date().toISOString() : null,
+          lastUsed: stats.fileDetails.length > 0 ? beijingTime.toBeijingISOString() : null,
           hasValidFiles: stats.validFiles > 0,
           fileDetails: stats.fileDetails
         };
@@ -171,20 +172,15 @@ router.get('/:id', async (req, res) => {
     // 获取标签下的文件
     const tagFiles = database.tags.getTagFiles(tagId);
     
-    // 获取标签的学习内容（如果有）
-    let learningContent = null;
-    try {
-      learningContent = database.tags.getTagLearningContent(tagId);
-    } catch (error) {
-      console.warn(`获取标签 ${tagId} 学习内容失败:`, error);
-    }
+    // 🔧 标签学习内容功能已移除（数据库表已删除）
+    const learningContent = null;
 
     const tagWithDetails = {
       ...tag,
       fileCount: tagFiles.length,
       files: tagFiles,
-      hasLearningContent: !!learningContent,
-      learningContent: learningContent
+      hasLearningContent: false,
+      learningContent: null
     };
 
     res.json({
@@ -364,258 +360,15 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
-// 🏷️ 为标签生成合并学习内容
-router.post('/:id/generate-learning-content', async (req, res) => {
-  try {
-    const tagId = parseInt(req.params.id);
+// 🔧 标签学习内容功能已完全移除（数据库表 tag_learning_content 已删除）
+// 原路由：POST /:id/generate-learning-content - 为标签生成合并学习内容
+// 如需恢复，请重新创建 tag_learning_content 表及相关函数
 
-    console.log('🤖 为标签生成学习内容:', tagId);
+// 🔧 标签学习内容功能已移除（数据库表 tag_learning_content 已删除）
+// 原路由：GET /:id/learning-content, DELETE /:id/learning-content
+// 如需恢复，请重新创建 tag_learning_content 表
 
-    if (isNaN(tagId)) {
-      return res.status(400).json({
-        success: false,
-        message: '无效的标签ID'
-      });
-    }
-
-    // 检查标签是否存在
-    const tag = database.get('SELECT * FROM tags WHERE id = ?', [tagId]);
-    if (!tag) {
-      return res.status(404).json({
-        success: false,
-        message: '标签不存在'
-      });
-    }
-
-    // 获取标签下的所有文件
-    const tagFiles = database.tags.getTagFiles(tagId);
-    if (tagFiles.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: `标签"${tag.name}"下没有文件，无法生成学习内容`
-      });
-    }
-
-    console.log(`📚 标签"${tag.name}"下有 ${tagFiles.length} 个文件，开始合并内容...`);
-
-    // 从upload模块获取文件数据库
-    const uploadModule = require('./upload');
-    const { fileDatabase } = uploadModule;
-
-    // 收集所有文件的内容和AI分析结果
-    let mergedContent = '';
-    let allKeyPoints = [];
-    let allTopics = [];
-    const fileInfos = [];
-
-    for (const tagFile of tagFiles) {
-      const file = fileDatabase.find(f => f.id === tagFile.file_id);
-      if (file && file.status === 'completed' && file.content) {
-        mergedContent += `\n\n=== 文档：${file.originalName} ===\n${file.content}`;
-        
-        if (file.aiAnalysis) {
-          if (file.aiAnalysis.keyPoints) {
-            allKeyPoints.push(...file.aiAnalysis.keyPoints);
-          }
-          if (file.aiAnalysis.topics) {
-            allTopics.push(...file.aiAnalysis.topics);
-          }
-        }
-
-        fileInfos.push({
-          name: file.originalName,
-          type: file.fileType,
-          difficulty: file.aiAnalysis?.difficulty || '中级',
-          stages: file.aiAnalysis?.learningStages?.length || 1
-        });
-      }
-    }
-
-    if (mergedContent.trim().length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: `标签"${tag.name}"下的文件内容为空或未完成分析`
-      });
-    }
-
-    console.log(`📄 合并内容长度: ${mergedContent.length} 字符`);
-
-    // 检查AI服务可用性
-    const aiAvailable = await aiService.checkModelAvailability();
-    if (!aiAvailable) {
-      return res.status(503).json({
-        success: false,
-        message: 'AI服务不可用，无法生成学习内容'
-      });
-    }
-
-    // 使用AI分析合并后的内容
-    console.log('🤖 开始AI分析合并内容...');
-    const analysisResult = await aiService.analyzeContent(
-      mergedContent, 
-      `标签：${tag.name} (${tagFiles.length}个文件)`
-    );
-
-    // 保存标签学习内容到数据库
-    const saveResult = database.tags.saveTagLearningContent(
-      tagId,
-      mergedContent,
-      JSON.stringify(analysisResult),
-      JSON.stringify(analysisResult.learningStages || []),
-      analysisResult.learningStages?.length || 1
-    );
-
-    console.log(`✅ 标签"${tag.name}"学习内容生成完成`);
-
-    res.json({
-      success: true,
-      message: `标签"${tag.name}"的学习内容生成成功`,
-      data: {
-        tagId: tagId,
-        tagName: tag.name,
-        fileCount: tagFiles.length,
-        contentLength: mergedContent.length,
-        analysis: analysisResult,
-        generatedAt: new Date().toISOString(),
-        fileInfos: fileInfos
-      }
-    });
-
-  } catch (error) {
-    console.error('生成标签学习内容失败:', error);
-    res.status(500).json({
-      success: false,
-      message: '生成标签学习内容失败',
-      error: error.message
-    });
-  }
-});
-
-// 🏷️ 获取标签的学习内容
-router.get('/:id/learning-content', async (req, res) => {
-  try {
-    const tagId = parseInt(req.params.id);
-
-    if (isNaN(tagId)) {
-      return res.status(400).json({
-        success: false,
-        message: '无效的标签ID'
-      });
-    }
-
-    // 检查标签是否存在
-    const tag = database.get('SELECT * FROM tags WHERE id = ?', [tagId]);
-    if (!tag) {
-      return res.status(404).json({
-        success: false,
-        message: '标签不存在'
-      });
-    }
-
-    // 获取标签的学习内容
-    const learningContent = database.tags.getTagLearningContent(tagId);
-    if (!learningContent) {
-      return res.status(404).json({
-        success: false,
-        message: `标签"${tag.name}"还没有生成学习内容`,
-        suggestion: '请先调用生成学习内容接口'
-      });
-    }
-
-    // 解析AI分析结果
-    let aiAnalysis = {};
-    try {
-      aiAnalysis = JSON.parse(learningContent.ai_analysis);
-    } catch (error) {
-      console.warn('解析AI分析结果失败:', error);
-    }
-
-    // 解析学习阶段
-    let learningStages = [];
-    try {
-      learningStages = JSON.parse(learningContent.learning_stages);
-    } catch (error) {
-      console.warn('解析学习阶段失败:', error);
-    }
-
-    // 获取标签下的文件信息
-    const tagFiles = database.tags.getTagFiles(tagId);
-
-    res.json({
-      success: true,
-      data: {
-        tagId: tagId,
-        tagName: tag.name,
-        tagDescription: tag.description,
-        fileCount: tagFiles.length,
-        totalStages: learningContent.total_stages,
-        contentLength: learningContent.merged_content?.length || 0,
-        analysis: aiAnalysis,
-        learningStages: learningStages,
-        createdAt: learningContent.created_at,
-        updatedAt: learningContent.updated_at,
-        // 不返回完整的merged_content，避免响应过大
-        hasContent: !!learningContent.merged_content
-      }
-    });
-
-  } catch (error) {
-    console.error('获取标签学习内容失败:', error);
-    res.status(500).json({
-      success: false,
-      message: '获取标签学习内容失败',
-      error: error.message
-    });
-  }
-});
-
-// 🏷️ 删除标签的学习内容
-router.delete('/:id/learning-content', async (req, res) => {
-  try {
-    const tagId = parseInt(req.params.id);
-
-    if (isNaN(tagId)) {
-      return res.status(400).json({
-        success: false,
-        message: '无效的标签ID'
-      });
-    }
-
-    // 检查标签是否存在
-    const tag = database.get('SELECT * FROM tags WHERE id = ?', [tagId]);
-    if (!tag) {
-      return res.status(404).json({
-        success: false,
-        message: '标签不存在'
-      });
-    }
-
-    // 删除学习内容
-    const result = database.run('DELETE FROM tag_learning_content WHERE tag_id = ?', [tagId]);
-
-    if (result.changes === 0) {
-      return res.status(404).json({
-        success: false,
-        message: `标签"${tag.name}"没有学习内容可删除`
-      });
-    }
-
-    console.log(`✅ 已删除标签"${tag.name}"的学习内容`);
-
-    res.json({
-      success: true,
-      message: `标签"${tag.name}"的学习内容已删除`
-    });
-
-  } catch (error) {
-    console.error('删除标签学习内容失败:', error);
-    res.status(500).json({
-      success: false,
-      message: '删除标签学习内容失败',
-      error: error.message
-    });
-  }
-});
+// 🔧 删除标签学习内容路由已移除（数据库表 tag_learning_content 已删除）
 
 // 🏷️ 获取标签统计信息
 router.get('/:id/stats', async (req, res) => {
@@ -641,8 +394,8 @@ router.get('/:id/stats', async (req, res) => {
     // 获取标签下的文件
     const tagFiles = database.tags.getTagFiles(tagId);
     
-    // 获取学习内容信息
-    const learningContent = database.tags.getTagLearningContent(tagId);
+    // 🔧 学习内容功能已移除（数据库表已删除）
+    const learningContent = null;
     
     // 统计文件类型
     const uploadModule = require('./upload');
@@ -734,8 +487,8 @@ router.get('/:id/realtime-stats', async (req, res) => {
     // 获取实时统计信息
     const stats = updateTagFileStats(tagId);
     
-    // 获取学习内容信息
-    const learningContent = database.tags.getTagLearningContent(tagId);
+    // 🔧 学习内容功能已移除（数据库表已删除）
+    const learningContent = null;
     
     const realtimeStats = {
       tag: {
@@ -758,7 +511,7 @@ router.get('/:id/realtime-stats', async (req, res) => {
       },
       readyForLearning: stats.validFiles > 0,
       readyForTesting: !!learningContent && stats.validFiles > 0,
-      lastUpdated: new Date().toISOString()
+      lastUpdated: beijingTime.toBeijingISOString()
     };
 
     res.json({
@@ -1166,8 +919,8 @@ router.get('/tags', async (req, res) => {
         
         // 🔧 修复：只显示有有效文件的标签
         if (validFiles.length > 0) {
-          // 获取标签的学习内容（如果有）
-          const learningContent = database.tags.getTagLearningContent(tag.id);
+          // 🔧 学习内容功能已移除（数据库表已删除）
+          const learningContent = null;
           
           availableTags.push({
             id: tag.id,
@@ -1180,7 +933,7 @@ router.get('/tags', async (req, res) => {
             totalStages: learningContent?.total_stages || Math.max(3, Math.ceil(validFiles.length * 1.5)),
             // 🔧 移除时间和难度字段
             createdAt: tag.created_at,
-            lastUpdated: new Date().toISOString(), // 🔔 添加更新时间戳
+            lastUpdated: beijingTime.toBeijingISOString(), // 🔔 添加更新时间戳
             validFileDetails: validFiles.map(tf => {
               const file = fileDatabase.find(f => f.id === tf.file_id);
               return {
@@ -1199,7 +952,7 @@ router.get('/tags', async (req, res) => {
       success: true,
       data: availableTags,
       total: availableTags.length,
-      timestamp: new Date().toISOString(), // 🔔 添加响应时间戳
+      timestamp: beijingTime.toBeijingISOString(), // 🔔 添加响应时间戳
       message: availableTags.length > 0 ? 
         `找到 ${availableTags.length} 个可用的学习标签` :
         '暂无可用的学习标签'

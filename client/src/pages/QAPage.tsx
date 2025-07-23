@@ -10,6 +10,11 @@ import {
   FileTextOutlined, PlusOutlined, MessageOutlined, DeleteOutlined, EditOutlined,
   MenuOutlined, CloseOutlined
 } from '@ant-design/icons';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import rehypeHighlight from 'rehype-highlight';
+import 'highlight.js/styles/github.css'; // 代码高亮样式
+import '../styles/markdown.css'; // 自定义Markdown样式
 import axios from 'axios';
 import { useAIModel } from '../contexts/AIModelContext';
 import { v4 as uuidv4 } from 'uuid';
@@ -32,7 +37,7 @@ interface Conversation {
   session_id: string;
   title: string;
   user_id: number;
-  knowledge_mode: 'tag' | 'document' | 'all';
+  knowledge_mode: 'tag' | 'document';
   knowledge_source_id?: string;
   knowledge_source_name?: string;
   ai_model: string;
@@ -46,6 +51,34 @@ interface KnowledgeSource {
   id: string;
   name: string;
 }
+
+// 消息内容渲染组件
+const MessageContent: React.FC<{ content: string; isUserMessage: boolean; isMobile: boolean }> = ({ 
+  content, 
+  isUserMessage, 
+  isMobile 
+}) => {
+  if (isUserMessage) {
+    // 用户消息直接显示文本
+    return (
+      <Paragraph style={{ margin: 0, fontSize: isMobile ? '14px' : '14px' }}>
+        {content}
+      </Paragraph>
+    );
+  }
+
+  // AI消息使用Markdown渲染
+  return (
+    <div className="markdown-content" style={{ fontSize: isMobile ? '14px' : '14px' }}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeHighlight]}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
+};
 
 const QAPage: React.FC = () => {
   const { currentModel } = useAIModel();
@@ -67,7 +100,7 @@ const QAPage: React.FC = () => {
   // 新建对话模态框状态
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [newConversationConfig, setNewConversationConfig] = useState({
-    knowledgeMode: 'all' as 'tag' | 'document' | 'all',
+    knowledgeMode: 'tag' as 'tag' | 'document',
     selectedSource: ''
   });
   const [tagOptions, setTagOptions] = useState<KnowledgeSource[]>([]);
@@ -95,13 +128,30 @@ const QAPage: React.FC = () => {
   }, [checkIsMobile]);
 
   // 滚动到底部
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
+  const scrollToBottom = useCallback(() => {
+    // 使用 requestAnimationFrame 确保 DOM 更新完成后再滚动
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        if (messagesEndRef.current) {
+          messagesEndRef.current.scrollIntoView({ 
+            behavior: 'smooth', 
+            block: 'nearest',
+            inline: 'nearest'
+          });
+        }
+        
+        // 额外确保滚动到底部的备用方案
+        const container = document.querySelector('.qa-messages-container');
+        if (container) {
+          container.scrollTop = container.scrollHeight;
+        }
+      }, 50); // 给DOM更新留出时间
+    });
+  }, []);
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, scrollToBottom]);
   // 加载对话历史
   const fetchConversations = useCallback(async () => {
     setIsHistoryLoading(true);
@@ -198,7 +248,14 @@ const QAPage: React.FC = () => {
       message.error('请先登录');
       return;
     }
-    let sourceName = '全部知识库';
+    
+    // 验证必须选择知识源
+    if (!newConversationConfig.selectedSource) {
+      message.error('请选择知识库范围');
+      return;
+    }
+    
+    let sourceName = '';
     let sourceId: string | undefined = undefined;
 
     if (newConversationConfig.knowledgeMode === 'tag') {
@@ -213,6 +270,11 @@ const QAPage: React.FC = () => {
         sourceName = doc.name;
         sourceId = doc.id;
       }
+    }
+
+    if (!sourceName) {
+      message.error('选择的知识库范围无效');
+      return;
     }
 
     const title = `与 ${sourceName} 的对话`;
@@ -231,7 +293,7 @@ const QAPage: React.FC = () => {
         setActiveConversation(newConversation);
         setMessages([]);
         setIsModalVisible(false);
-        setNewConversationConfig({ knowledgeMode: 'all', selectedSource: '' });
+        setNewConversationConfig({ knowledgeMode: 'tag', selectedSource: '' });
         
         // 移动端创建对话后自动折叠侧边栏
         if (isMobile) {
@@ -279,22 +341,40 @@ const QAPage: React.FC = () => {
           model: response.data.data.aiMessage.model
         };
         setMessages(prev => [...prev, aiMessage]);
-        // 更新侧边栏的消息数量
-        setConversations(convs => convs.map(c => 
-          c.id === activeConversation.id ? { ...c, message_count: c.message_count + 2 } : c
-        ));
+        // 🔧 修复：重新获取对话列表以获得准确的消息计数
+        await fetchConversations();
       } else {
         message.error('发送消息失败');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('发送消息失败:', error);
+      
+      // 改进错误消息处理
+      let errorContent = '抱歉，AI服务暂时不可用，请稍后重试。';
+      
+      if (error.response?.data?.message) {
+        // 使用服务器返回的用户友好错误信息
+        errorContent = error.response.data.message;
+      } else if (error.message && (error.message.includes('timeout') || error.message.includes('aborted'))) {
+        errorContent = '网络连接超时，请检查网络后重试。您也可以：\n• 稍等片刻后重新提问\n• 尝试提问更简短的问题\n• 检查网络连接状态';
+      } else if (error.message && (error.message.includes('Network Error') || error.code === 'ECONNRESET')) {
+        errorContent = '网络连接出现问题，请稍后重试。如问题持续存在，请联系技术支持。';
+      }
+      
       const errorResponse: Message = {
         id: uuidv4(),
         type: 'assistant',
-        content: '抱歉，AI服务暂时不可用，请稍后重试。',
+        content: errorContent,
         timestamp: new Date(),
       };
       setMessages(prev => [...prev, errorResponse]);
+      
+      // 显示更友好的错误提示
+      if (error.response?.data?.message) {
+        message.warning(error.response.data.message);
+      } else {
+        message.error('发送消息失败，请稍后再试');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -336,17 +416,28 @@ const QAPage: React.FC = () => {
 
   // 渲染侧边栏内容
   const renderSidebarContent = () => (
-    <div style={{ padding: '12px', display: 'flex', flexDirection: 'column', height: '100%' }}>
+    <div style={{ 
+      padding: '12px', 
+      display: 'flex', 
+      flexDirection: 'column', 
+      height: '100%',
+      overflow: 'hidden' // 防止侧边栏整体滚动
+    }}>
       <Button
         type="primary"
         icon={<PlusOutlined />}
         onClick={showNewConversationModal}
-        style={{ marginBottom: '12px' }}
+        style={{ marginBottom: '12px', flexShrink: 0 }}
       >
         新建对话
       </Button>
-      <Title level={5} style={{ marginTop: 0, marginBottom: '8px' }}>对话历史</Title>
-      <div style={{ flex: 1, overflowY: 'auto' }}>
+      <Title level={5} style={{ marginTop: 0, marginBottom: '8px', flexShrink: 0 }}>对话历史</Title>
+      <div style={{ 
+        flex: 1, 
+        overflowY: 'auto',
+        minHeight: 0, // 重要：确保flex子元素可以收缩
+        paddingRight: '4px' // 为滚动条留出空间
+      }}>
         {isHistoryLoading ? <Spin /> : (
           <List
             dataSource={conversations}
@@ -389,7 +480,11 @@ const QAPage: React.FC = () => {
     </div>
   );
   return (
-    <Layout style={{ height: 'calc(100vh - 112px)' }}>
+    <Layout style={{ 
+      height: 'calc(100vh - 64px)', // 修正header高度
+      maxHeight: 'calc(100vh - 64px)',
+      overflow: 'hidden' // 防止外层滚动
+    }}>
       {/* 移动端使用Drawer，桌面端使用Sider */}
       {isMobile ? (
         <Drawer
@@ -448,8 +543,20 @@ const QAPage: React.FC = () => {
         )}
         
         {activeConversation ? (
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '16px' }}>
-            <div style={{ marginBottom: '16px', paddingBottom: '12px', borderBottom: '1px solid #f0f0f0' }}>              <Title level={4} style={{ margin: 0, fontSize: isMobile ? '16px' : '20px' }} className="learning-material-title">
+          <div style={{ 
+            flex: 1, 
+            display: 'flex', 
+            flexDirection: 'column', 
+            padding: '16px',
+            minHeight: 0 // 重要：允许flex子元素收缩
+          }}>
+            <div style={{ 
+              marginBottom: '16px', 
+              paddingBottom: '12px', 
+              borderBottom: '1px solid #f0f0f0',
+              flexShrink: 0 // 固定头部不参与滚动
+            }}>
+              <Title level={4} style={{ margin: 0, fontSize: isMobile ? '16px' : '20px' }} className="learning-material-title">
                 {activeConversation.title}
               </Title>
               <Space wrap>
@@ -463,50 +570,79 @@ const QAPage: React.FC = () => {
                 </Tag>
               </Space>
             </div>
-            <div style={{ flex: 1, overflowY: 'auto', padding: '0 8px' }}>
-              {messages.map((msg, index) => (
-                <div key={index} style={{ 
-                  marginBottom: '16px', 
-                  display: 'flex', 
-                  alignItems: 'flex-start',
-                  flexDirection: isMobile && msg.type === 'user' ? 'row-reverse' : 'row'
-                }}>
-                  <Avatar 
-                    icon={msg.type === 'user' ? <UserOutlined /> : <RobotOutlined />} 
-                    style={{ 
-                      margin: isMobile && msg.type === 'user' ? '0 0 0 12px' : '0 12px 0 0',
-                      flexShrink: 0
-                    }} 
-                  />
-                  <div style={{ 
-                    background: msg.type === 'user' ? '#e6f7ff' : '#f0f2f5', 
-                    padding: isMobile ? '8px 10px' : '8px 12px', 
-                    borderRadius: '8px', 
-                    maxWidth: isMobile ? '85%' : '80%',
-                    wordBreak: 'break-word'
+            <div 
+              className="qa-messages-container"
+              style={{ 
+                flex: 1, 
+                overflowY: 'auto', 
+                overflowX: 'hidden',
+                padding: '0 8px',
+                marginBottom: '16px',
+                minHeight: 0, // 重要：允许收缩
+                // 使用动态计算高度，更准确
+                maxHeight: isMobile 
+                  ? 'calc(100vh - 280px)' // 移动端预留更多空间给输入框
+                  : 'calc(100vh - 220px)'  // 桌面端
+              }}>
+              {messages.map((msg, index) => {
+                const isUserMessage = msg.type === 'user';
+                const shouldReverse = isMobile && isUserMessage;
+                
+                return (
+                  <div key={index} style={{ 
+                    marginBottom: '16px', 
+                    display: 'flex', 
+                    alignItems: 'flex-start',
+                    flexDirection: shouldReverse ? 'row-reverse' : 'row',
+                    justifyContent: shouldReverse ? 'flex-start' : 'flex-start'
                   }}>
-                    <Paragraph style={{ margin: 0, fontSize: isMobile ? '14px' : '14px' }}>
-                      {msg.content}
-                    </Paragraph>
-                    <Text type="secondary" style={{ 
-                      fontSize: isMobile ? '11px' : '12px', 
-                      marginTop: '4px', 
-                      display: 'block' 
+                    <Avatar 
+                      icon={isUserMessage ? <UserOutlined /> : <RobotOutlined />} 
+                      style={{ 
+                        margin: shouldReverse ? '0 0 0 12px' : '0 12px 0 0',
+                        flexShrink: 0,
+                        backgroundColor: isUserMessage ? '#1890ff' : '#52c41a'
+                      }} 
+                    />
+                    <div style={{ 
+                      background: isUserMessage ? '#e6f7ff' : '#f6ffed', 
+                      padding: isMobile ? '8px 10px' : '8px 12px', 
+                      borderRadius: '8px', 
+                      maxWidth: isMobile ? '85%' : '80%',
+                      wordBreak: 'break-word',
+                      border: isUserMessage ? '1px solid #91d5ff' : '1px solid #b7eb8f'
                     }}>
-                      {new Date(msg.timestamp).toLocaleTimeString()}
-                      {msg.model && ` (模型: ${msg.model})`}
-                    </Text>
+                      <MessageContent 
+                        content={msg.content} 
+                        isUserMessage={isUserMessage} 
+                        isMobile={isMobile} 
+                      />
+                      <Text type="secondary" style={{ 
+                        fontSize: isMobile ? '11px' : '12px', 
+                        marginTop: '4px', 
+                        display: 'block' 
+                      }}>
+                        {new Date(msg.timestamp).toLocaleTimeString()}
+                        {msg.model && ` (模型: ${msg.model})`}
+                      </Text>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
               {isLoading && <Spin style={{ display: 'block', marginTop: '12px' }} />}
               <div ref={messagesEndRef} />
             </div>
             <div style={{ 
-              marginTop: '16px', 
+              marginTop: 'auto',  // 推到底部
+              flexShrink: 0,      // 不参与收缩
               display: 'flex',
               flexDirection: isMobile ? 'column' : 'row',
-              gap: isMobile ? '8px' : '12px'
+              gap: isMobile ? '8px' : '12px',
+              paddingTop: '16px',
+              borderTop: '1px solid #f0f0f0',
+              backgroundColor: '#fff', // 确保背景不透明
+              position: 'sticky',      // 粘性定位
+              bottom: 0               // 固定在底部
             }}>
               <TextArea
                 ref={inputRef}
@@ -521,7 +657,10 @@ const QAPage: React.FC = () => {
                 }}
                 placeholder="输入您的问题..."
                 disabled={isLoading}
-                style={{ flex: 1 }}
+                style={{ 
+                  flex: 1,
+                  fontSize: isMobile ? '16px' : '14px' // 避免移动端缩放
+                }}
               />
               <Button
                 type="primary"
@@ -530,7 +669,8 @@ const QAPage: React.FC = () => {
                 loading={isLoading}
                 style={{ 
                   alignSelf: isMobile ? 'stretch' : 'flex-end',
-                  height: isMobile ? '40px' : 'auto'
+                  height: isMobile ? '48px' : 'auto', // 增加移动端按钮高度
+                  minWidth: isMobile ? 'auto' : '80px'
                 }}
                 block={isMobile}
               >
@@ -578,11 +718,10 @@ const QAPage: React.FC = () => {
             style={{ width: '100%' }}
             onChange={(value) => setNewConversationConfig({ knowledgeMode: value, selectedSource: '' })}
           >
-            <Select.Option value="all">全部知识库</Select.Option>
             <Select.Option value="tag">按标签</Select.Option>
             <Select.Option value="document">按文档</Select.Option>
           </Select>
-          {newConversationConfig.knowledgeMode !== 'all' && renderSourceSelector()}
+          {renderSourceSelector()}
         </Space>
       </Modal>
     </Layout>

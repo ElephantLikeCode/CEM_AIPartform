@@ -40,34 +40,67 @@ class DeepSeekService {
       
       console.log('🔍 检查DeepSeek API可用性...');
       
-      // 进行实际的API测试调用
-      const testResponse = await axios.post(`${this.baseURL}/chat/completions`, {
-        model: this.model,
-        messages: [
-          {
-            role: 'user',
-            content: 'test'
-          }
-        ],
-        max_tokens: 10,
-        stream: false
-      }, {
-        headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
-          'Content-Type': 'application/json'
-        },
-        timeout: 10000
-      });
+      // 🔧 增加重试机制处理间歇性网络问题
+      const maxRetries = 2;
+      let lastError = null;
       
-      console.log('✅ DeepSeek API连接测试成功');
-      return true;
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          console.log(`📡 尝试连接DeepSeek API (第${attempt}/${maxRetries}次)...`);
+          
+          // 进行实际的API测试调用，使用更短的超时时间
+          const testResponse = await axios.post(`${this.baseURL}/chat/completions`, {
+            model: this.model,
+            messages: [
+              {
+                role: 'user',
+                content: 'test'
+              }
+            ],
+            max_tokens: 5,
+            stream: false
+          }, {
+            headers: {
+              'Authorization': `Bearer ${this.apiKey}`,
+              'Content-Type': 'application/json'
+            },
+            timeout: 8000 // 增加超时时间到8秒
+          });
+          
+          console.log('✅ DeepSeek API连接测试成功');
+          return true;
+          
+        } catch (error) {
+          lastError = error;
+          console.error(`❌ 第${attempt}次尝试失败:`, error.message);
+          
+          // 如果是网络相关错误且还有重试机会，等待后重试
+          if (attempt < maxRetries && this.isRetryableError(error)) {
+            console.log(`🔄 ${2}秒后重试...`);
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            continue;
+          }
+          
+          // 最后一次尝试或非重试错误，跳出循环
+          break;
+        }
+      }
+      
+      // 所有尝试都失败了
+      console.error('❌ DeepSeek API检查失败，所有重试都已用尽');
+      console.error('最后错误:', lastError?.message);
+      console.error('错误代码:', lastError?.code);
+      
+      if (lastError?.code === 'ENOTFOUND' || lastError?.code === 'ECONNREFUSED' || lastError?.code === 'ETIMEDOUT') {
+        console.error('🌐 网络连接问题，无法访问DeepSeek API');
+      } else if (lastError?.response) {
+        console.error('API响应状态:', lastError.response.status);
+        console.error('API响应数据:', lastError.response.data);
+      }
+      return false;
       
     } catch (error) {
-      console.error('❌ DeepSeek API检查失败:', error.message);
-      if (error.response) {
-        console.error('API响应状态:', error.response.status);
-        console.error('API响应数据:', error.response.data);
-      }
+      console.error('❌ DeepSeek API检查过程中发生未预期错误:', error.message);
       return false;
     }
   }
@@ -151,7 +184,6 @@ ${content.substring(0, 6000)}
   "learningPath": "建议的学习路径",
   "applicationScenarios": ["应用场景1", "应用场景2"],
   "valueAssessment": "内容价值评估",
-  "difficulty": "初级/中级/高级",
   "estimatedStudyTime": "预估学习时间（分钟）"
 }`,
       
@@ -301,8 +333,8 @@ ${content.substring(0, 5000)}
     }
   }
 
-  // 🔧 新增：聊天对话方法
-  async chat(prompt) {
+  // 🔧 新增：聊天对话方法 - 改进重试机制和错误处理
+  async chat(prompt, retries = 2) {
     try {
       if (!this.apiKey) {
         throw new Error('DeepSeek API Key 未配置');
@@ -310,7 +342,23 @@ ${content.substring(0, 5000)}
 
       console.log('💬 DeepSeek聊天对话开始');
       
-      const response = await axios.post(`${this.baseURL}/chat/completions`, {
+      // 创建axios配置，优化连接设置
+      const axiosConfig = {
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'User-Agent': 'CEM-AI-Platform/1.0'
+        },
+        timeout: 45000, // 增加超时时间到45秒
+        retry: retries,
+        retryDelay: axiosRetryDelay => Math.pow(2, axiosRetryDelay) * 1000, // 指数退避
+        validateStatus: function (status) {
+          return status >= 200 && status < 300; // 只有2xx状态才认为成功
+        }
+      };
+
+      const requestData = {
         model: this.model,
         messages: [
           {
@@ -321,23 +369,109 @@ ${content.substring(0, 5000)}
         temperature: 0.7,
         max_tokens: 2000,
         stream: false
-      }, {
-        headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
-          'Content-Type': 'application/json'
-        },
-        timeout: 30000
-      });
+      };
 
-      const result = response.data.choices[0].message.content;
-      console.log('✅ DeepSeek聊天完成');
+      let lastError;
       
-      return result;
+      // 实现重试机制
+      for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+          console.log(`🔄 DeepSeek API 请求尝试 ${attempt + 1}/${retries + 1}`);
+          
+          const response = await axios.post(`${this.baseURL}/chat/completions`, requestData, axiosConfig);
+
+          if (response.data && response.data.choices && response.data.choices.length > 0) {
+            const result = response.data.choices[0].message.content;
+            console.log('✅ DeepSeek聊天完成');
+            return result;
+          } else {
+            throw new Error('DeepSeek API返回了无效的响应格式');
+          }
+
+        } catch (error) {
+          lastError = error;
+          const isRetryableError = this.isRetryableError(error);
+          
+          console.error(`❌ DeepSeek API 请求失败 (尝试 ${attempt + 1}/${retries + 1}):`, {
+            message: error.message,
+            code: error.code,
+            status: error.response?.status,
+            isRetryable: isRetryableError
+          });
+
+          // 如果是最后一次尝试或不可重试的错误，直接抛出
+          if (attempt === retries || !isRetryableError) {
+            break;
+          }
+
+          // 等待重试
+          const delay = Math.pow(2, attempt) * 1000; // 1s, 2s, 4s
+          console.log(`⏳ 等待 ${delay}ms 后重试...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      }
+
+      // 所有重试都失败了
+      throw lastError;
 
     } catch (error) {
-      console.error('❌ DeepSeek聊天失败:', error.message);
-      throw error;
+      console.error('❌ DeepSeek聊天最终失败:', error.message);
+      throw this.createUserFriendlyError(error);
     }
+  }
+
+  // 判断错误是否可以重试
+  isRetryableError(error) {
+    // 网络连接错误
+    if (error.code === 'ECONNRESET' || error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') {
+      return true;
+    }
+    
+    // HTTP 状态码错误
+    if (error.response) {
+      const status = error.response.status;
+      // 500系列服务器错误和429请求过多可以重试
+      return status >= 500 || status === 429;
+    }
+    
+    // 包含特定关键词的错误
+    const errorMessage = error.message.toLowerCase();
+    if (errorMessage.includes('timeout') || 
+        errorMessage.includes('aborted') || 
+        errorMessage.includes('network') ||
+        errorMessage.includes('connection')) {
+      return true;
+    }
+    
+    return false;
+  }
+
+  // 创建用户友好的错误信息
+  createUserFriendlyError(error) {
+    let userMessage = 'AI服务暂时不可用，请稍后重试';
+    
+    if (error.code === 'ECONNRESET' || error.code === 'ECONNABORTED') {
+      userMessage = '网络连接中断，请检查网络连接后重试';
+    } else if (error.code === 'ETIMEDOUT') {
+      userMessage = '请求超时，请稍后重试';
+    } else if (error.response) {
+      const status = error.response.status;
+      if (status === 401) {
+        userMessage = 'AI服务认证失败，请联系管理员';
+      } else if (status === 429) {
+        userMessage = '请求过于频繁，请稍后重试';
+      } else if (status >= 500) {
+        userMessage = 'AI服务器暂时不可用，请稍后重试';
+      }
+    }
+    
+    // 保留原始错误信息用于调试
+    const userFriendlyError = new Error(userMessage);
+    userFriendlyError.originalError = error;
+    userFriendlyError.code = error.code;
+    userFriendlyError.status = error.response?.status;
+    
+    return userFriendlyError;
   }
 
   // 🔧 新增：通用的内容生成方法

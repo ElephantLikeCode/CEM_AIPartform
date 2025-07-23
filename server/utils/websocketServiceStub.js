@@ -3,6 +3,8 @@
  * 避免循环依赖问题
  */
 
+const beijingTime = require('./beijingTime'); // 🕐 北京时间工具
+
 // 创建一个简单的桩实现
 const webSocketServiceStub = {
   // 学习进度通知
@@ -49,7 +51,7 @@ const webSocketServiceStub = {
     uniqueUsers: 0, 
     totalRooms: 0, 
     uptime: process.uptime(),
-    timestamp: new Date().toISOString(),
+    timestamp: beijingTime.toBeijingISOString(),
     mode: 'stub'
   })
 };

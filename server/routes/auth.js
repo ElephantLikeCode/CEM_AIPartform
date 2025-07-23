@@ -3,6 +3,7 @@ const router = express.Router();
 const db = require('../database/database');
 const crypto = require('crypto');
 const nodemailer = require('nodemailer');
+const beijingTime = require('../utils/beijingTime'); // 🕐 引入北京时间工具
 
 // 验证码存储（在生产环境中应使用 Redis 或数据库）
 const verificationCodes = new Map();
@@ -277,7 +278,8 @@ router.get('/user', async (req, res) => {
       });
     }
 
-    const user = await db.get('SELECT id, email, username, role, created_at FROM users WHERE id = ?', [req.session.userId]);
+    const userId = req.session.userId;
+    const user = await db.get('SELECT id, email, username, role, created_at FROM users WHERE id = ?', [userId]);
     
     if (!user) {
       return res.status(404).json({
@@ -286,6 +288,25 @@ router.get('/user', async (req, res) => {
       });
     }
 
+    // 🔍 新增：获取用户学习记录摘要
+    const learningStats = await db.get(`
+      SELECT 
+        COUNT(*) as total_learning,
+        COUNT(CASE WHEN completed = 1 THEN 1 END) as completed_learning,
+        AVG(CASE WHEN test_score IS NOT NULL THEN test_score END) as avg_test_score
+      FROM learning_progress 
+      WHERE user_id = ?
+    `, [userId]);
+
+    // 获取最近的学习活动
+    const recentActivity = await db.get(`
+      SELECT updated_at as last_activity
+      FROM learning_progress 
+      WHERE user_id = ?
+      ORDER BY updated_at DESC
+      LIMIT 1
+    `, [userId]);
+
     res.json({
       success: true,
       data: {
@@ -293,7 +314,18 @@ router.get('/user', async (req, res) => {
         email: user.email,
         username: user.username,
         role: user.role || 'user',
-        createdAt: user.created_at
+        createdAt: beijingTime.formatToChinese(user.created_at), // 🕐 转换为北京时间
+        learningStats: {
+          totalLearning: learningStats?.total_learning || 0,
+          completedLearning: learningStats?.completed_learning || 0,
+          learningCompletion: learningStats?.total_learning > 0 
+            ? Math.round((learningStats.completed_learning / learningStats.total_learning) * 100) 
+            : 0,
+          avgTestScore: learningStats?.avg_test_score ? Math.round(learningStats.avg_test_score) : null,
+          lastActivity: recentActivity?.last_activity 
+            ? beijingTime.formatToChinese(recentActivity.last_activity)
+            : null
+        }
       }
     });
   } catch (error) {
@@ -301,6 +333,173 @@ router.get('/user', async (req, res) => {
     res.status(500).json({
       success: false,
       message: '获取用户信息失败'
+    });
+  }
+});
+
+// 用户修改自己的密码
+router.put('/update-password', async (req, res) => {
+  try {
+    // 检查登录状态
+    if (!req.session.userId) {
+      return res.status(401).json({
+        success: false,
+        message: '请先登录'
+      });
+    }
+
+    const userId = req.session.userId;
+    const { currentPassword, newPassword } = req.body;
+
+    // 验证参数
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: '请提供当前密码和新密码'
+      });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: '新密码至少6位'
+      });
+    }
+
+    // 验证当前密码格式
+    if (!/^[^\s]+$/.test(newPassword)) {
+      return res.status(400).json({
+        success: false,
+        message: '密码不能包含空格'
+      });
+    }
+
+    // 获取用户当前密码hash
+    const user = await db.get('SELECT password_hash FROM users WHERE id = ?', [userId]);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: '用户不存在'
+      });
+    }
+
+    // 验证当前密码
+    const currentPasswordHash = crypto.createHash('sha256').update(currentPassword).digest('hex');
+    if (currentPasswordHash !== user.password_hash) {
+      return res.status(400).json({
+        success: false,
+        message: '当前密码不正确'
+      });
+    }
+
+    // 检查新密码是否与当前密码相同
+    const newPasswordHash = crypto.createHash('sha256').update(newPassword).digest('hex');
+    if (newPasswordHash === user.password_hash) {
+      return res.status(400).json({
+        success: false,
+        message: '新密码不能与当前密码相同'
+      });
+    }
+
+    // 更新密码
+    const result = await db.run(
+      'UPDATE users SET password_hash = ? WHERE id = ?',
+      [newPasswordHash, userId]
+    );
+    
+    if (result.changes > 0) {
+      res.json({
+        success: true,
+        message: '密码修改成功'
+      });
+    } else {
+      res.status(404).json({
+        success: false,
+        message: '用户不存在'
+      });
+    }
+  } catch (error) {
+    console.error('修改密码失败:', error);
+    res.status(500).json({
+      success: false,
+      message: '修改密码失败'
+    });
+  }
+});
+
+// 用户修改自己的用户名
+router.put('/update-username', async (req, res) => {
+  try {
+    // 检查登录状态
+    if (!req.session.userId) {
+      return res.status(401).json({
+        success: false,
+        message: '请先登录'
+      });
+    }
+
+    const userId = req.session.userId;
+    const { username } = req.body;
+
+    // 验证用户名
+    if (!username || username.trim().length < 2) {
+      return res.status(400).json({
+        success: false,
+        message: '用户名至少2个字符'
+      });
+    }
+
+    if (username.length > 50) {
+      return res.status(400).json({
+        success: false,
+        message: '用户名不能超过50个字符'
+      });
+    }
+
+    // 验证用户名格式
+    const usernameRegex = /^[a-zA-Z0-9\u4e00-\u9fa5_-]+$/;
+    if (!usernameRegex.test(username)) {
+      return res.status(400).json({
+        success: false,
+        message: '用户名只能包含字母、数字、中文、下划线和横线'
+      });
+    }
+
+    // 检查用户名是否已存在（如果有其他用户使用了这个用户名）
+    const existingUser = await db.get('SELECT id FROM users WHERE username = ? AND id != ?', [username.trim(), userId]);
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        message: '该用户名已被其他用户使用'
+      });
+    }
+
+    // 更新用户名
+    const result = await db.run(
+      'UPDATE users SET username = ? WHERE id = ?',
+      [username.trim(), userId]
+    );
+    
+    if (result.changes > 0) {
+      res.json({
+        success: true,
+        message: '用户名修改成功',
+        data: {
+          id: userId,
+          username: username.trim()
+        }
+      });
+    } else {
+      res.status(404).json({
+        success: false,
+        message: '用户不存在'
+      });
+    }
+  } catch (error) {
+    console.error('修改用户名失败:', error);
+    res.status(500).json({
+      success: false,
+      message: '修改用户名失败'
     });
   }
 });

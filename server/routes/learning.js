@@ -4,6 +4,7 @@ const database = require('../database/database'); // 🏷️ 新增：数据库�
 const ragService = require('../utils/ragService'); // 🔧 新增：RAG服务
 const webSocketService = require('../utils/websocketServiceStub'); // 🔄 临时：WebSocket桩服务
 const { requireAuth, requireAdmin } = require('../middleware/auth');
+const beijingTime = require('../utils/beijingTime'); // 🕐 引入北京时间工具
 
 // 获取文件数据库 - 从upload模块导入
 let fileDatabase = [];
@@ -145,8 +146,8 @@ router.get('/materials', requireAuth, async (req, res) => {
           summary: analysis.summary || `学习文档：${file.originalName}`,
           stages: analysis.learningStages?.length || 1,
           keyPoints: analysis.keyPoints?.length || 0,
-          uploadTime: file.uploadTime || file.createdAt,
-          uploadTimestamp: file.uploadTimestamp || file.createdAt,
+          uploadTime: file.uploadTime ? beijingTime.format(file.uploadTime) : beijingTime.format(file.createdAt), // 🕐 使用北京时间格式化
+          uploadTimestamp: file.uploadTimestamp || beijingTime.toBeijingTimestamp(file.createdAt), // 🕐 使用北京时间戳
           fileType: file.fileType,
           size: file.fileSize || 0,
           status: file.status,
@@ -167,8 +168,8 @@ router.get('/materials', requireAuth, async (req, res) => {
         return material;
       })
       .sort((a, b) => {
-        const timeA = a.uploadTimestamp || new Date(a.uploadTime).getTime() || 0;
-        const timeB = b.uploadTimestamp || new Date(b.uploadTime).getTime() || 0;
+        const timeA = a.uploadTimestamp || beijingTime.toBeijingTimestamp(a.uploadTime) || 0; // 🕐 使用北京时间戳排序
+        const timeB = b.uploadTimestamp || beijingTime.toBeijingTimestamp(b.uploadTime) || 0; // 🕐 使用北京时间戳排序
         return timeB - timeA;
       });
     
@@ -217,13 +218,12 @@ router.get('/materials', requireAuth, async (req, res) => {
       data: availableMaterials,
       total: availableMaterials.length,
       debug: {
-        totalFiles: fileDatabase.length,
         availableCount: availableMaterials.length,
-        timestamp: new Date().toISOString()
+        timestamp: beijingTime.toBeijingISOString() // 🕐 使用北京时间
       },
       message: availableMaterials.length > 0 ? 
         `找到 ${availableMaterials.length} 个可用学习材料` : 
-        '暂无可用的学习材料，请等待文件AI分析完成'
+        '暂无可用的学习材料'
     });
   } catch (error) {
     console.error('❌ 获取学习材料失败:', error);
@@ -370,7 +370,7 @@ router.post('/start', requireAuth, async (req, res) => {
       current_stage: 1,
       total_stages: learningContent.totalStages,
       completed: false,
-      startedAt: new Date().toISOString(),
+      startedAt: beijingTime.toBeijingISOString(), // 🕐 使用北京时间
       learningContent: learningContent,
       fileName: selectedFile.originalName
     };
@@ -383,7 +383,7 @@ router.post('/start', requireAuth, async (req, res) => {
         fileName: selectedFile.originalName,
         currentStage: 1,
         totalStages: learningContent.totalStages,
-        startedAt: new Date().toISOString()
+        startedAt: beijingTime.toBeijingISOString()
       });
     } catch (wsError) {
       console.warn('WebSocket通知发送失败:', wsError);
@@ -526,7 +526,7 @@ router.put('/progress/:userId', (req, res) => {
         break;
       case 'complete':
         progress.completed = true;
-        progress.completedAt = new Date().toISOString();
+        progress.completedAt = beijingTime.toBeijingISOString();
         break;
       case 'set_stage':
         if (newStage >= 1 && newStage <= progress.total_stages) {
@@ -548,12 +548,12 @@ router.put('/progress/:userId', (req, res) => {
         }
     }    // Update progress
     progress.current_stage = newStage;
-    progress.lastUpdated = new Date().toISOString();
+    progress.lastUpdated = beijingTime.toBeijingISOString();
     
     if (completed !== undefined) {
       progress.completed = completed;
       if (completed) {
-        progress.completedAt = new Date().toISOString();
+        progress.completedAt = beijingTime.toBeijingISOString();
       }
     }
       // 💾 保存进度到数据库 - 🔧 修改逻辑：仅在学习完成时保存临时进度，正式进度需要测试通过
@@ -716,40 +716,34 @@ router.post('/progress/reset/:userId', async (req, res) => {
       userSessions.delete(userIdInt);
       console.log(`✅ 已清理用户${userIdInt}的学习会话`);
     }
-      // 尝试清理数据库中的学习进度（如果存在）
-    try {
-      if (database.db) {
-        // 删除用户所有的学习进度记录
-        const result = database.db.prepare('DELETE FROM learning_progress WHERE user_id = ?').run(userIdInt);
-        console.log(`✅ 数据库中删除了${result.changes}条用户${userIdInt}的学习进度记录`);
-      }
-    } catch (dbError) {
-      console.warn('⚠️ 清理数据库学习进度时出错:', dbError);
-      // 不阻断请求，继续执行
-    }
+      // 🔧 修改：不删除数据库中已保存的学习进度，保留用户的学习记录
+    // 只清除内存中的当前学习状态，允许用户重新选择学习材料
+    console.log(`ℹ️ 保留数据库中用户${userIdInt}的学习记录，仅清除当前学习状态`);
+    console.log('💡 用户可以重新选择学习材料而不丢失已完成的学习进度');
     
     // 发送WebSocket通知
     try {
       webSocketService.notifyLearningProgress(userIdInt, {
         type: 'learning_reset',
         userId: userIdInt,
-        message: '学习进度已重置',
-        timestamp: new Date().toISOString()
+        message: '当前学习状态已清除',
+        timestamp: beijingTime.toBeijingISOString()
       });
     } catch (wsError) {
       console.warn('WebSocket重置通知发送失败:', wsError);
     }
     
-    console.log(`✅ 用户${userIdInt}的学习进度重置完成`);
+    console.log(`✅ 用户${userIdInt}的当前学习状态重置完成`);
     
     res.json({
       success: true,
-      message: '学习进度已成功重置',
+      message: '当前学习状态已清除，您可以重新选择学习材料。已完成的学习记录已保留。',
       data: {
         userId: userIdInt,
-        resetAt: new Date().toISOString(),
+        resetAt: beijingTime.toBeijingISOString(),
         clearedMemory: true,
-        clearedSession: true
+        clearedSession: true,
+        preservedRecords: true
       }
     });
     
@@ -1026,7 +1020,16 @@ router.post('/complete-with-test', requireAuth, async (req, res) => {
 
     // 尝试保存学习进度（只有分数≥80才会真正保存）
     try {
-      const saveResult = database.saveFileProgress(
+      console.log('💾 尝试保存学习进度到数据库...', {
+        userId: userIdInt,
+        fileId,
+        currentStage: memoryProgress.total_stages,
+        totalStages: memoryProgress.total_stages,
+        completed: true,
+        testScore: testScoreInt
+      });
+      
+      const saveResult = database.learningProgress.saveFileProgress(
         userIdInt,
         fileId,
         memoryProgress.total_stages, // 当前阶段设为总阶段数（完成）
@@ -1035,7 +1038,9 @@ router.post('/complete-with-test', requireAuth, async (req, res) => {
         testScoreInt // 测试分数
       );
 
-      if (saveResult && testScoreInt >= 80) {
+      console.log('💾 数据库保存结果:', saveResult);
+
+      if (testScoreInt >= 80) {
         // 清理内存中的学习进度
         delete learningProgress[userIdInt];
         
@@ -1049,7 +1054,7 @@ router.post('/complete-with-test', requireAuth, async (req, res) => {
             fileName: memoryProgress.fileName,
             testScore: testScoreInt,
             passed: true,
-            completedAt: new Date().toISOString()
+            completedAt: beijingTime.toBeijingISOString()
           });
         } catch (wsError) {
           console.warn('WebSocket通知发送失败:', wsError);
@@ -1063,7 +1068,8 @@ router.post('/complete-with-test', requireAuth, async (req, res) => {
             passed: true,
             progressSaved: true,
             canProceedToNext: true
-          }
+          },
+          nextFileRecommendation: await getNextFileRecommendation(userIdInt, fileId)
         });
       } else {
         console.log(`⚠️ 测试分数${testScoreInt}未达到80分，学习进度未保存`);
@@ -1105,9 +1111,10 @@ router.post('/complete-test', requireAuth, async (req, res) => {
     const { fileId, testScore, userId: bodyUserId } = req.body;
     const userId = bodyUserId || req.user.id;
     
-    console.log('🏆 处理测试完成:', { userId, fileId, testScore });
+    console.log('🏆 处理测试完成:', { userId, fileId, testScore, testScoreType: typeof testScore });
     
     if (!fileId) {
+      console.log('❌ 缺少文件ID参数');
       return res.status(400).json({
         success: false,
         message: '缺少文件ID参数'
@@ -1115,6 +1122,7 @@ router.post('/complete-test', requireAuth, async (req, res) => {
     }
     
     if (testScore === undefined || testScore === null) {
+      console.log('❌ 缺少测试分数参数');
       return res.status(400).json({
         success: false,
         message: '缺少测试分数参数'
@@ -1134,6 +1142,59 @@ router.post('/complete-test', requireAuth, async (req, res) => {
     }
     
     console.log('📄 完成的文件:', completedFile.originalName);
+    
+    // 🔧 修复：保存学习进度到数据库（如果测试通过）
+    const userIdInt = parseInt(userId);
+    const testScoreInt = parseInt(testScore);
+    
+    console.log('🔢 分数转换:', { originalScore: testScore, testScoreInt, passed: testScoreInt >= 80 });
+    
+    if (testScoreInt >= 80) {
+      console.log('✅ 测试分数达到80分，开始保存学习进度...');
+      try {
+        // 获取内存中的学习进度（如果有的话）
+        let totalStages = 4; // 默认阶段数
+        if (learningProgress[userIdInt] && learningProgress[userIdInt].total_stages) {
+          totalStages = learningProgress[userIdInt].total_stages;
+        } else if (completedFile.aiAnalysis && completedFile.aiAnalysis.learningStages) {
+          totalStages = completedFile.aiAnalysis.learningStages.length;
+        }
+        
+        // 保存学习进度到数据库
+        console.log('💾 准备保存学习进度:', { userIdInt, fileId, totalStages, testScoreInt });
+        
+        const saveResult = database.learningProgress.saveFileProgress(
+          userIdInt,
+          fileId,
+          totalStages, // 当前阶段设为总阶段数（完成）
+          totalStages,
+          true, // 已完成
+          testScoreInt // 测试分数
+        );
+        
+        console.log('💾 学习进度保存结果:', saveResult);
+        
+        // 清理内存中的学习进度
+        delete learningProgress[userIdInt];
+        
+        // 发送WebSocket通知
+        try {
+          webSocketService.notifyLearningProgress(userIdInt, {
+            type: 'learning_completed_with_test',
+            fileId: fileId,
+            fileName: completedFile.originalName,
+            testScore: testScoreInt,
+            passed: true,
+            completedAt: beijingTime.toBeijingISOString()
+          });
+        } catch (wsError) {
+          console.warn('WebSocket通知发送失败:', wsError);
+        }
+      } catch (saveError) {
+        console.error('保存学习进度失败:', saveError);
+        // 继续执行，不因为保存失败而中断流程
+      }
+    }
     
     // 检查是否通过测试
     const passed = testScore >= 80;
@@ -1220,7 +1281,67 @@ router.post('/complete-test', requireAuth, async (req, res) => {
       }
     }
     
-    // 统计总体学习进度
+    // 计算基于标签的学习进度
+    let tagProgress = null;
+    const currentFileTags = database.tags.getFileTags(fileId);
+    
+    if (currentFileTags && currentFileTags.length > 0) {
+      console.log('📊 计算标签学习进度...');
+      
+      for (const tag of currentFileTags) {
+        try {
+          // 获取该标签下的所有文件（按顺序）
+          const tagFiles = database.tagFileOrder.getFilesByTagOrdered(tag.id);
+          console.log(`🏷️ 标签"${tag.name}"共有${tagFiles.length}个文件`);
+          
+          // 获取用户在该标签下已完成的文件数量
+          const completedInTag = database.learningProgress.getCompletedFilesByTag(userIdInt, tag.id);
+          let completedCount = completedInTag ? completedInTag.length : 0;
+          
+          // 🔧 修复：如果当前测试通过，先保存进度再计算，确保数据库中有最新的记录
+          if (passed && testScoreInt >= 80) {
+            // 重新查询数据库获取最新的完成数量
+            const updatedCompletedInTag = database.learningProgress.getCompletedFilesByTag(userIdInt, tag.id);
+            completedCount = updatedCompletedInTag ? updatedCompletedInTag.length : 0;
+          }
+          
+          let totalCompleted = completedCount;
+          
+          console.log(`📈 标签"${tag.name}"学习进度: ${totalCompleted}/${tagFiles.length} (已完成文件: ${completedCount}, 当前测试通过: ${passed})`);
+          
+          // 计算当前文件在标签中的位置
+          const currentFileIndex = tagFiles.findIndex(f => String(f.id) === String(fileId));
+          const currentPosition = currentFileIndex >= 0 ? currentFileIndex + 1 : 1;
+          
+          // 检查是否是该标签的最后一个文件
+          const isLastInTag = currentFileIndex >= 0 && currentFileIndex === tagFiles.length - 1;
+          
+          tagProgress = {
+            tagId: tag.id,
+            tagName: tag.name,
+            tagColor: tag.color || '#1890ff',
+            completed: totalCompleted,
+            total: tagFiles.length,
+            percentage: tagFiles.length > 0 ? Math.round((totalCompleted / tagFiles.length) * 100) : 0,
+            currentPosition: currentPosition,
+            isLastInTag: isLastInTag
+          };
+          
+          console.log('🎯 标签进度详情:', tagProgress);
+          break; // 只使用第一个标签的进度
+        } catch (tagError) {
+          console.error(`计算标签"${tag.name}"进度失败:`, tagError);
+        }
+      }
+    }
+    
+    // 如果有标签进度且是最后一个文件，不推荐下一个文件
+    if (tagProgress && tagProgress.isLastInTag && passed) {
+      console.log('🏆 已完成该标签的最后一个文件，不推荐下一个文件');
+      nextFileRecommendation = null;
+    }
+    
+    // 统计总体学习进度（保持原有逻辑作为备用）
     const isAdmin = req.user.role === 'admin' || req.user.role === 'sub_admin';
     let accessibleFiles = fileDatabase;
     
@@ -1238,8 +1359,9 @@ router.post('/complete-test', requireAuth, async (req, res) => {
       Array.isArray(file.aiAnalysis.learningStages)
     ).length;
     
-    // 简化：假设当前是第一个完成的文件（实际应该查询学习进度数据库）
-    const completedFiles = 1; // 这里应该查询实际的完成数量
+    // 获取用户实际完成的文件数量
+    const userCompletedFiles = database.learningProgress.getUserCompletedFiles(userIdInt);
+    const completedFiles = userCompletedFiles ? userCompletedFiles.length : 0;
     
     const result = {
       testPassed: passed,
@@ -1249,6 +1371,8 @@ router.post('/complete-test', requireAuth, async (req, res) => {
         name: completedFile.originalName
       },
       nextFile: nextFileRecommendation,
+      tagProgress: tagProgress, // 🔧 新增：标签学习进度
+      // 保留原有的总体进度作为备用
       progress: {
         completed: completedFiles,
         total: totalFiles,
@@ -1258,7 +1382,9 @@ router.post('/complete-test', requireAuth, async (req, res) => {
       message: passed ? 
         (nextFileRecommendation ? 
           `恭喜通过测试！建议继续学习"${nextFileRecommendation.name}"` : 
-          '恭喜通过测试！您已完成所有可用的学习材料') :
+          (tagProgress?.isLastInTag ? 
+            `恭喜完成标签"${tagProgress.tagName}"的所有学习内容！` :
+            '恭喜通过测试！您已完成所有可用的学习材料')) :
         '测试未通过，建议重新学习相关内容后再次测试'
     };
     
@@ -1303,9 +1429,16 @@ router.get('/admin/all-progress', requireAdmin, async (req, res) => {
     
     console.log('执行SQL:', sql, '参数:', params);
     const rows = database.all(sql, params);
-    console.log('查询结果:', rows);
+    console.log('查询结果:', rows ? rows.length : 0, '条记录');
     
-    res.json({ success: true, data: rows || [] });
+    // 转换时间格式为北京时间
+    const formattedRows = (rows || []).map(row => ({
+      ...row,
+      created_at: beijingTime.formatToChinese(row.created_at),
+      updated_at: beijingTime.formatToChinese(row.updated_at)
+    }));
+    
+    res.json({ success: true, data: formattedRows });
   } catch (error) {
     console.error('获取学习进度失败:', error);
     res.status(500).json({ success: false, message: '获取学习进度失败', error: error.message });
@@ -1315,3 +1448,263 @@ router.get('/admin/all-progress', requireAdmin, async (req, res) => {
 // 导出路由和学习进度数据
 module.exports = router;
 module.exports.learningProgress = learningProgress;
+
+// 🎯 辅助函数：获取下一个文件推荐
+async function getNextFileRecommendation(userId, completedFileId) {
+  try {
+    const uploadModule = require('./upload');
+    const { fileDatabase } = uploadModule;
+    
+    // 获取当前完成的文件信息
+    const completedFile = fileDatabase.find(f => String(f.id) === String(completedFileId));
+    if (!completedFile) {
+      return null;
+    }
+    
+    // 获取用户权限
+    const isAdmin = true; // 简化处理，实际需要根据用户信息判断
+    let accessibleFiles = fileDatabase;
+    
+    if (!isAdmin) {
+      const visibleFileIds = database.fileVisibility.getVisibleFileIdsForUser(userId);
+      accessibleFiles = fileDatabase.filter(file => 
+        visibleFileIds.some(id => String(id) === String(file.id))
+      );
+    }
+    
+    // 过滤有效文件
+    const validFiles = accessibleFiles.filter(file => {
+      const hasValidAnalysis = file.aiAnalysis && 
+        typeof file.aiAnalysis === 'object' && 
+        file.aiAnalysis.learningStages && 
+        Array.isArray(file.aiAnalysis.learningStages) && 
+        file.aiAnalysis.learningStages.length > 0;
+      
+      return file.status === 'completed' && hasValidAnalysis;
+    });
+    
+    let nextFile = null;
+    
+    // 获取当前文件的标签
+    const currentFileTags = database.tags.getFileTags(completedFileId);
+    
+    if (currentFileTags && currentFileTags.length > 0) {
+      console.log('🏷️ 当前文件有标签，按标签顺序查找下一个文件...');
+      
+      // 按第一个标签的顺序查找下一个文件
+      const firstTag = currentFileTags[0];
+      const tagFiles = database.tagFileOrder.getFilesByTagOrdered(firstTag.id);
+      const currentIndex = tagFiles.findIndex(f => String(f.id) === String(completedFileId));
+      
+      if (currentIndex >= 0 && currentIndex < tagFiles.length - 1) {
+        // 有下一个文件
+        const nextTagFile = tagFiles[currentIndex + 1];
+        
+        // 检查用户是否可以访问这个文件
+        const nextFileInDatabase = validFiles.find(f => String(f.id) === String(nextTagFile.id));
+        
+        if (nextFileInDatabase) {
+          nextFile = nextFileInDatabase;
+          console.log(`🎯 找到标签顺序中的下一个文件: ${nextFile.originalName}`);
+        }
+      }
+    }
+    
+    // 如果没有按标签顺序找到，随机推荐一个未学习的文件
+    if (!nextFile) {
+      console.log('🔍 按随机顺序查找下一个未学习的文件...');
+      const unlearnedFiles = validFiles.filter(f => String(f.id) !== String(completedFileId));
+      
+      if (unlearnedFiles.length > 0) {
+        nextFile = unlearnedFiles[0]; // 简单选择第一个
+        console.log(`🎲 随机推荐文件: ${nextFile.originalName}`);
+      }
+    }
+    
+    if (nextFile) {
+      const analysis = nextFile.aiAnalysis;
+      return {
+        id: nextFile.id,
+        name: nextFile.originalName,
+        summary: analysis.summary || `学习文档：${nextFile.originalName}`,
+        stages: analysis.learningStages?.length || 1,
+        keyPoints: analysis.keyPoints?.length || 0,
+        tags: database.tags.getFileTags(nextFile.id) || []
+      };
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('获取下一个文件推荐失败:', error);
+    return null;
+  }
+}
+
+// 🔧 新增：调试API - 检查学习进度保存情况
+router.get('/debug/progress/:userId', (req, res) => {
+  try {
+    const { userId } = req.params;
+    const userIdInt = parseInt(userId);
+    
+    // 获取内存中的学习进度
+    const memoryProgress = learningProgress[userIdInt];
+    
+    // 获取数据库中的学习进度
+    const dbProgress = database.learningProgress.getUserAllProgress(userIdInt);
+    
+    res.json({
+      success: true,
+      data: {
+        memory: memoryProgress || null,
+        database: dbProgress || [],
+        timestamp: beijingTime.toBeijingISOString()
+      }
+    });
+  } catch (error) {
+    console.error('获取调试信息失败:', error);
+    res.status(500).json({
+      success: false,
+      message: '获取调试信息失败',
+      error: error.message
+    });
+  }
+});
+
+// 🔧 新增：调试API - 手动模拟完成学习进度（仅用于测试）
+router.post('/debug/simulate-completion', (req, res) => {
+  try {
+    const { userId, fileId, testScore = 85 } = req.body;
+    
+    if (!userId || !fileId) {
+      return res.status(400).json({
+        success: false,
+        message: '缺少必要参数: userId 和 fileId'
+      });
+    }
+    
+    const userIdInt = parseInt(userId);
+    const testScoreInt = parseInt(testScore);
+    
+    // 模拟保存学习进度到数据库
+    const saveResult = database.learningProgress.saveFileProgress(
+      userIdInt,
+      fileId,
+      5, // 假设总共5个阶段
+      5, // 当前阶段设为总阶段数（完成）
+      true, // 已完成
+      testScoreInt // 测试分数
+    );
+    
+    console.log('🎯 调试API：模拟完成学习进度', {
+      userId: userIdInt,
+      fileId,
+      testScore: testScoreInt,
+      saveResult
+    });
+    
+    res.json({
+      success: true,
+      message: `已为用户${userIdInt}模拟完成文件${fileId}的学习，测试分数${testScoreInt}`,
+      data: {
+        userId: userIdInt,
+        fileId,
+        testScore: testScoreInt,
+        saveResult
+      }
+    });
+  } catch (error) {
+    console.error('模拟完成学习进度失败:', error);
+    res.status(500).json({
+      success: false,
+      message: '模拟完成学习进度失败',
+      error: error.message
+    });
+  }
+});
+
+// 🔍 新增：用户查询自己的学习记录
+router.get('/my-records', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    console.log(`🔍 用户${userId}查询自己的学习记录`);
+
+    // 查询学习进度记录
+    const learningRecords = await database.all(`
+      SELECT 
+        lp.*,
+        uf.original_name as filename,
+        uf.file_type
+      FROM learning_progress lp
+      LEFT JOIN uploaded_files uf ON lp.file_id = uf.id
+      WHERE lp.user_id = ?
+      ORDER BY lp.updated_at DESC
+    `, [userId]);
+
+    // 转换时间格式为北京时间
+    const formattedLearningRecords = learningRecords.map(record => ({
+      ...record,
+      created_at: beijingTime.formatToChinese(record.created_at),
+      updated_at: beijingTime.formatToChinese(record.updated_at)
+    }));
+
+    res.json({
+      success: true,
+      data: {
+        learningProgress: formattedLearningRecords,
+        summary: {
+          totalLearningRecords: formattedLearningRecords.length,
+          completedLearning: formattedLearningRecords.filter(r => r.completed).length
+        }
+      }
+    });
+  } catch (error) {
+    console.error('获取用户学习记录失败:', error);
+    res.status(500).json({
+      success: false,
+      message: '获取学习记录失败'
+    });
+  }
+});
+
+// 🔍 新增：用户查询特定文件的学习记录
+router.get('/my-records/:fileId', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const fileId = req.params.fileId;
+    console.log(`🔍 用户${userId}查询文件${fileId}的学习记录`);
+
+    // 🔧 修复：使用uploaded_files代替已删除的knowledge_files表
+    const learningRecord = database.get(`
+      SELECT 
+        lp.*,
+        uf.original_name as filename,
+        uf.file_type
+      FROM learning_progress lp
+      LEFT JOIN uploaded_files uf ON lp.file_id = uf.id
+      WHERE lp.user_id = ? AND lp.file_id = ?
+    `, [userId, fileId]);
+
+    // 转换时间格式
+    const formattedLearningRecord = learningRecord ? {
+      ...learningRecord,
+      created_at: beijingTime.formatToChinese(learningRecord.created_at),
+      updated_at: beijingTime.formatToChinese(learningRecord.updated_at)
+    } : null;
+
+    res.json({
+      success: true,
+      data: {
+        learningProgress: formattedLearningRecord,
+        hasLearningRecord: !!formattedLearningRecord
+      }
+    });
+  } catch (error) {
+    console.error('获取文件学习记录失败:', error);
+    res.status(500).json({
+      success: false,
+      message: '获取文件学习记录失败'
+    });
+  }
+});
+
+module.exports = router;

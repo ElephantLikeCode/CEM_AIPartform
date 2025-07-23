@@ -1,0 +1,201 @@
+/* Markdown 渲染样式 */
+.markdown-content {
+  line-height: 1.6;
+  color: #333;
+}
+
+/* QA页面滚动优化 */
+.qa-messages-container {
+  /* 自定义滚动条样式 */
+  scrollbar-width: thin;
+  scrollbar-color: #d9d9d9 transparent;
+  /* 优化移动端滚动 */
+  -webkit-overflow-scrolling: touch;
+  /* 确保滚动行为平滑 */
+  scroll-behavior: smooth;
+  /* 使用 contain 属性优化渲染性能 */
+  contain: layout style;
+}
+
+.qa-messages-container::-webkit-scrollbar {
+  width: 6px;
+}
+
+.qa-messages-container::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.qa-messages-container::-webkit-scrollbar-thumb {
+  background-color: #d9d9d9;
+  border-radius: 3px;
+}
+
+.qa-messages-container::-webkit-scrollbar-thumb:hover {
+  background-color: #bfbfbf;
+}
+
+/* 移动端优化 */
+@media (max-width: 768px) {
+  .qa-messages-container {
+    /* 移动端隐藏滚动条但保持可滚动 */
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  
+  .qa-messages-container::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4,
+.markdown-content h5,
+.markdown-content h6 {
+  margin-top: 16px;
+  margin-bottom: 8px;
+  font-weight: 600;
+  color: #1890ff;
+}
+
+.markdown-content h1 {
+  font-size: 18px;
+  border-bottom: 2px solid #e6f7ff;
+  padding-bottom: 4px;
+}
+
+.markdown-content h2 {
+  font-size: 16px;
+  border-bottom: 1px solid #e6f7ff;
+  padding-bottom: 2px;
+}
+
+.markdown-content h3 {
+  font-size: 15px;
+}
+
+.markdown-content p {
+  margin: 6px 0;
+  line-height: 1.6;
+}
+
+.markdown-content ul,
+.markdown-content ol {
+  padding-left: 16px;
+  margin: 6px 0;
+}
+
+.markdown-content li {
+  margin: 3px 0;
+  line-height: 1.5;
+}
+
+.markdown-content li strong {
+  color: #1890ff;
+  font-weight: 600;
+}
+
+.markdown-content code {
+  background: #f5f5f5;
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-size: 0.9em;
+  color: #d32f2f;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+}
+
+.markdown-content pre {
+  background: #f5f5f5;
+  padding: 12px;
+  border-radius: 4px;
+  overflow: auto;
+  margin: 8px 0;
+  border: 1px solid #e0e0e0;
+}
+
+.markdown-content pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+}
+
+.markdown-content blockquote {
+  border-left: 4px solid #1890ff;
+  padding-left: 12px;
+  margin: 8px 0;
+  font-style: italic;
+  background: #f0f8ff;
+  padding: 8px 12px;
+  border-radius: 0 4px 4px 0;
+}
+
+.markdown-content table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 8px 0;
+}
+
+.markdown-content th,
+.markdown-content td {
+  border: 1px solid #e0e0e0;
+  padding: 6px 8px;
+  text-align: left;
+}
+
+.markdown-content th {
+  background: #f5f5f5;
+  font-weight: 600;
+  color: #1890ff;
+}
+
+.markdown-content tr:nth-child(even) {
+  background: #fafafa;
+}
+
+/* 数字列表的特殊样式 */
+.markdown-content ol li {
+  padding-left: 4px;
+}
+
+.markdown-content ol li::marker {
+  color: #1890ff;
+  font-weight: 600;
+}
+
+/* 无序列表的特殊样式 */
+.markdown-content ul li {
+  padding-left: 4px;
+}
+
+.markdown-content ul li::marker {
+  color: #1890ff;
+}
+
+/* 链接样式 */
+.markdown-content a {
+  color: #1890ff;
+  text-decoration: none;
+}
+
+.markdown-content a:hover {
+  text-decoration: underline;
+}
+
+/* 强调文本 */
+.markdown-content strong {
+  color: #1890ff;
+  font-weight: 600;
+}
+
+.markdown-content em {
+  color: #666;
+  font-style: italic;
+}
+
+/* 分割线 */
+.markdown-content hr {
+  border: none;
+  border-top: 2px solid #e6f7ff;
+  margin: 16px 0;
+}

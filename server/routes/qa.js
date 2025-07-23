@@ -1,4 +1,5 @@
 const express = require('express');
+const beijingTime = require('../utils/beijingTime'); // 🕐 北京时间工具
 const router = express.Router();
 const database = require('../database/database');
 const ragService = require('../utils/ragService');
@@ -16,7 +17,7 @@ router.post('/ask', async (req, res) => {
       mode,
       tagId,
       fileId,
-      timestamp: new Date().toISOString()
+      timestamp: beijingTime.toBeijingISOString()
     });
 
     // 参数验证
@@ -56,13 +57,13 @@ router.post('/ask', async (req, res) => {
 
         contextInfo.source = `标签：${tag.name}`;
 
-        // 获取标签的学习内容
-        const learningContent = database.tags.getTagLearningContent(parseInt(tagId));
-        if (learningContent && learningContent.merged_content) {
-          context = learningContent.merged_content;
+        // 🔧 学习内容功能已移除（数据库表已删除）
+        const learningContent = null;
+        if (false) { // 学习内容已不可用
+          context = '';
           console.log(`✅ 从标签学习内容获取到${context.length}字符的上下文`);
         } else {
-          // 如果没有合并内容，从标签下的文件获取
+          // 从标签下的文件动态获取内容
           const tagFiles = database.tags.getTagFiles(parseInt(tagId));
           const uploadModule = require('./upload');
           const { fileDatabase } = uploadModule;
@@ -193,7 +194,7 @@ router.post('/ask', async (req, res) => {
         answer,
         context: contextInfo,
         model,
-        timestamp: new Date().toISOString(),
+        timestamp: beijingTime.toBeijingISOString(),
         contextLength: context.length
       },
       message: '问答完成'
@@ -272,7 +273,7 @@ router.delete('/history/:userId', async (req, res) => {
 //         question,
 //         answer,
 //         model: 'test',
-//         timestamp: new Date().toISOString()
+//         timestamp: beijingTime.toBeijingISOString()
 //       },
 //       message: 'QA测试成功'
 //     });

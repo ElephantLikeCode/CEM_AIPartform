@@ -1,15 +1,17 @@
 {
   "name": "stgc3000-server",
-  "version": "2.1.0",
-  "description": "STGC3000 AI Learning Platform Server",
+  "version": "2.3.0",
+  "description": "STGC3000 AI Learning Platform Server - Optimized Edition",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "node index.js",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "cleanup-db": "node cleanup_db.js"
   },
   "dependencies": {
     "axios": "^1.10.0",
+    "bcrypt": "^5.1.1",
     "better-sqlite3": "^11.10.0",
     "body-parser": "^1.20.3",
     "cors": "^2.8.5",
@@ -17,6 +19,7 @@
     "express": "^4.21.2",
     "express-session": "^1.18.0",
     "fs-extra": "^11.3.0",
+    "jsonwebtoken": "^9.0.2",
     "mammoth": "^1.9.1",
     "multer": "^1.4.5-lts.1",
     "node-cron": "^3.0.3",
@@ -26,20 +29,20 @@
     "uuid": "^10.0.0",
     "ws": "^8.18.2"
   },
-  "optionalDependencies": {
-    "bcrypt": "^5.1.1",
-    "jsonwebtoken": "^9.0.2",
-    "sqlite3": "^5.1.7"
-  },
   "devDependencies": {
-    "nodemon": "^3.1.10"
+    "_nodemon": "^3.1.10"
   },
   "keywords": [
     "ai",
     "learning",
     "platform",
     "education",
-    "ollama"
+    "ollama",
+    "deepseek",
+    "document-processing",
+    "sqlite",
+    "express",
+    "optimized"
   ],
   "author": "STGC3000 Team",
   "license": "MIT",

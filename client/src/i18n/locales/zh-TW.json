@@ -77,7 +77,8 @@
     "termsAndConditions": "服務條款",
     "privacyPolicy": "隱私政策",
     "agreeTerms": "登入即表示您同意我們的",
-    "and": "和"
+    "and": "和",
+    "sessionExpired": "會話已過期，請重新登入"
   },  "database": {
     "title": "知識庫管理",
     "user_title": "我的資料庫",
@@ -213,7 +214,6 @@
     "serverError": "伺服器錯誤",
     "notFound": "頁面未找到",
     "accessDenied": "存取被拒絕",
-    "sessionExpired": "會話已過期，請重新登入",
     "unexpectedError": "發生未知錯誤",
     "tryAgain": "請重試",
     "contactSupport": "如問題持續，請聯絡技術支援"

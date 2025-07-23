@@ -77,7 +77,8 @@
     "termsAndConditions": "Termos e Condições",
     "privacyPolicy": "Política de Privacidade",
     "agreeTerms": "Ao fazer login, você concorda com nossos",
-    "and": "e"
+    "and": "e",
+    "sessionExpired": "Sessão expirada, faça login novamente"
   },  "database": {
     "title": "Gestão da Base de Conhecimento",
     "user_title": "Minha Biblioteca",
@@ -128,7 +129,6 @@
     "description": "Descrição do curso",
     "objectives": "Objetivos de aprendizagem",
     "estimatedTime": "Tempo estimado",
-    "difficulty": "Nível de dificuldade",
     "beginner": "Iniciante",
     "intermediate": "Intermediário",
     "advanced": "Avançado",
@@ -213,7 +213,6 @@
     "serverError": "Erro do servidor",
     "notFound": "Página não encontrada",
     "accessDenied": "Acesso negado",
-    "sessionExpired": "Sessão expirada, faça login novamente",
     "unexpectedError": "Ocorreu um erro inesperado",
     "tryAgain": "Tente novamente",
     "contactSupport": "Se o problema persistir, entre em contato com o suporte técnico"

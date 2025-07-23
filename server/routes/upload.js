@@ -1,4 +1,5 @@
 const express = require('express');
+const beijingTime = require('../utils/beijingTime'); // 🕐 北京时间工具
 const multer = require('multer');      // 📤 文件上传处理
 const path = require('path');
 const fs = require('fs-extra');        // 📁 文件系统操作
@@ -515,7 +516,7 @@ router.post('/files', requireAuth, upload.single('file'), async (req, res) => {
       fileType: path.extname(rawFileName),
       status: 'uploaded',
       createdAt: Date.now(),
-      uploadTime: new Date().toISOString(),
+      uploadTime: beijingTime.toBeijingISOString(),
       uploadTimestamp: Date.now(),
       relativeTime: getRelativeTime(Date.now()),
       hasAIResults: false,
@@ -583,7 +584,22 @@ router.post('/files', requireAuth, upload.single('file'), async (req, res) => {
 
 // AI处理文件函数 - 🔧 移除难度和时间估算逻辑
 async function processFileWithAI(fileData, selectedModel = 'local') {
+  const fileId = fileData.id;
+  
   try {
+    // 🔧 添加文件锁机制
+    if (fileLocks.has(fileId)) {
+      console.log(`⚠️ 文件 ${fileData.originalName} 已在处理中，跳过重复处理`);
+      return;
+    }
+    
+    // 设置文件锁
+    fileLocks.set(fileId, { 
+      userId: 'system', 
+      lockedAt: Date.now(), 
+      sessionId: 'ai-processing' 
+    });
+    
     console.log(`🤖 开始深度AI处理文件: ${fileData.originalName}，使用模型: ${selectedModel}`);
     
     // 更新状态为处理中
@@ -593,7 +609,7 @@ async function processFileWithAI(fileData, selectedModel = 'local') {
     try {
       database.files.updateFile(fileData.id, { 
         status: 'processing',
-        processedAt: new Date().toISOString()
+        processedAt: beijingTime.toBeijingISOString()
       });
       console.log('💾 处理状态已同步到数据库');
     } catch (dbError) {
@@ -633,7 +649,7 @@ async function processFileWithAI(fileData, selectedModel = 'local') {
     // 更新文件数据 - 🔧 移除难度和时间相关字段
     fileData.aiAnalysis = analysis;
     fileData.status = 'completed';
-    fileData.processedAt = new Date().toISOString();
+    fileData.processedAt = beijingTime.toBeijingISOString();
     fileData.hasAIResults = !!(analysis && analysis.learningStages);
     fileData.stages = analysis?.learningStages?.length || 0;
     fileData.keyPoints = analysis?.keyPoints?.length || 0;
@@ -668,7 +684,7 @@ async function processFileWithAI(fileData, selectedModel = 'local') {
     
     fileData.status = 'failed';
     fileData.error = error.message;
-    fileData.processedAt = new Date().toISOString();
+    fileData.processedAt = beijingTime.toBeijingISOString();
     
     // 🔧 同步错误状态到数据库
     try {
@@ -680,6 +696,12 @@ async function processFileWithAI(fileData, selectedModel = 'local') {
       console.log('💾 错误状态已同步到数据库');
     } catch (dbError) {
       console.error('❌ 保存错误状态到数据库失败:', dbError);
+    }
+  } finally {
+    // 🔧 确保无论成功还是失败都释放文件锁
+    if (fileLocks.has(fileId)) {
+      fileLocks.delete(fileId);
+      console.log(`🔓 已释放文件锁: ${fileData.originalName}`);
     }
   }
 }
@@ -703,11 +725,14 @@ router.post('/files/:id/reprocess', requireAuth, async (req, res) => {
     }
     
     const file = fileDatabase[fileIndex];
-      // 检查文件状态 - 🔧 修复：允许所有文件重新分析，不仅仅是失败的文件
-    if (file.status === 'processing') {
+    
+    // 🔧 修复：允许processing状态的文件重新处理（用户可以重试卡住的处理）
+    // 只有在文件正在被其他请求处理时才拒绝（通过锁机制检查）
+    const isLocked = fileLocks.has(fileId);
+    if (isLocked) {
       return res.status(400).json({
         success: false,
-        message: '文件正在处理中，请稍后重试'
+        message: '文件正在被其他请求处理，请稍后重试'
       });
     }
     
@@ -771,18 +796,18 @@ router.post('/files/:id/reprocess', requireAuth, async (req, res) => {
   }
 });
 
-// 🏷️ 新增：为文件添加标签 - 修复为立即更新统计
+// 🏷️ 修改：为文件设置标签 - 单标签模式，新标签会替换旧标签
 router.post('/files/:id/tags', requireAuth, async (req, res) => {
   try {
     const fileId = req.params.id;
-    const { tagIds } = req.body;
+    const { tagId } = req.body; // 🔧 改为单个标签ID而不是数组
 
-    console.log('🏷️ 为文件添加标签:', { fileId, tagIds });
+    console.log('🏷️ 为文件设置标签 (单标签模式):', { fileId, tagId });
 
-    if (!Array.isArray(tagIds) || tagIds.length === 0) {
+    if (!tagId) {
       return res.status(400).json({
         success: false,
-        message: '标签ID数组不能为空'
+        message: '标签ID不能为空'
       });
     }
 
@@ -795,46 +820,50 @@ router.post('/files/:id/tags', requireAuth, async (req, res) => {
     }
 
     // 验证标签是否存在
-    const validTags = [];
-    for (const tagId of tagIds) {
-      try {
-        const tag = database.get('SELECT * FROM tags WHERE id = ?', [tagId]);
-        if (tag) {
-          validTags.push(tag);
-          // 添加文件-标签关联
-          database.tags.addFileTag(fileId, tagId);
-        } else {
-          console.warn(`标签 ${tagId} 不存在`);
-        }
-      } catch (error) {
-        console.error(`添加标签 ${tagId} 失败:`, error);
-      }
+    const tag = database.get('SELECT * FROM tags WHERE id = ?', [tagId]);
+    if (!tag) {
+      return res.status(400).json({
+        success: false,
+        message: '指定的标签不存在'
+      });
     }
 
-    // 更新内存中的文件标签信息
-    file.tags = validTags;
+    try {
+      // 添加文件-标签关联（会自动替换现有标签）
+      database.tags.addFileTag(fileId, tagId);
+      
+      // 更新内存中的文件标签信息
+      file.tags = [tag]; // 🔧 单标签模式，只有一个标签
 
-    // 🔔 立即通知所有相关标签更新统计
-    const notifiedTags = notifyTagStatsUpdate(fileId);
+      // 🔔 立即通知所有相关标签更新统计
+      const notifiedTags = notifyTagStatsUpdate(fileId);
 
-    console.log(`✅ 为文件 ${file.originalName} 添加了 ${validTags.length} 个标签，通知 ${notifiedTags.length} 个标签更新统计`);
+      console.log(`✅ 文件 ${file.originalName} 标签已设置为: ${tag.name}，通知 ${notifiedTags.length} 个标签更新统计`);
 
-    res.json({
-      success: true,
-      message: `成功为文件添加 ${validTags.length} 个标签`,
-      data: {
-        fileId: fileId,
-        fileName: file.originalName,
-        tags: validTags,
-        notifiedTags: notifiedTags.length
-      }
-    });
+      res.json({
+        success: true,
+        message: `成功为文件设置标签: ${tag.name}`,
+        data: {
+          fileId: fileId,
+          fileName: file.originalName,
+          tag: tag,
+          notifiedTags: notifiedTags.length
+        }
+      });
+    } catch (error) {
+      console.error(`设置标签 ${tagId} 失败:`, error);
+      res.status(500).json({
+        success: false,
+        message: '设置文件标签失败',
+        error: error.message
+      });
+    }
 
   } catch (error) {
-    console.error('添加文件标签失败:', error);
+    console.error('设置文件标签失败:', error);
     res.status(500).json({
       success: false,
-      message: '添加文件标签失败',
+      message: '设置文件标签失败',
       error: error.message
     });
   }
@@ -933,18 +962,18 @@ router.get('/files/:id/tags', requireAuth, async (req, res) => {
   }
 });
 
-// 🏷️ 新增：批量为文件设置标签（替换现有标签）
+// 🏷️ 修改：批量为文件设置标签 - 单标签模式
 router.put('/files/:id/tags', requireAuth, async (req, res) => {
   try {
     const fileId = req.params.id;
-    const { tagIds } = req.body;
+    const { tagId } = req.body; // 🔧 改为单个标签ID
 
-    console.log('🏷️ 批量设置文件标签:', { fileId, tagIds });
+    console.log('🏷️ 批量设置文件标签 (单标签模式):', { fileId, tagId });
 
-    if (!Array.isArray(tagIds)) {
+    if (!tagId) {
       return res.status(400).json({
         success: false,
-        message: '标签ID必须是数组格式'
+        message: '标签ID不能为空'
       });
     }
 
@@ -956,46 +985,45 @@ router.put('/files/:id/tags', requireAuth, async (req, res) => {
       });
     }
 
-    // 先移除文件的所有现有标签
-    const existingTags = database.tags.getFileTags(fileId);
-    for (const tag of existingTags) {
-      database.tags.removeFileTag(fileId, tag.id);
+    // 验证标签是否存在
+    const tag = database.get('SELECT * FROM tags WHERE id = ?', [tagId]);
+    if (!tag) {
+      return res.status(400).json({
+        success: false,
+        message: '指定的标签不存在'
+      });
     }
 
-    // 添加新的标签
-    const validTags = [];
-    for (const tagId of tagIds) {
-      try {
-        const tag = database.get('SELECT * FROM tags WHERE id = ?', [tagId]);
-        if (tag) {
-          validTags.push(tag);
-          database.tags.addFileTag(fileId, tagId);
-        } else {
-          console.warn(`标签 ${tagId} 不存在`);
+    try {
+      // 直接设置标签（addFileTag会自动处理替换逻辑）
+      database.tags.addFileTag(fileId, tagId);
+      
+      // 更新内存中的文件标签信息
+      file.tags = [tag]; // 🔧 单标签模式
+
+      // 🔔 立即通知所有相关标签更新统计
+      const notifiedTags = notifyTagStatsUpdate(fileId);
+
+      console.log(`✅ 文件 ${file.originalName} 标签已设置为: ${tag.name}，通知 ${notifiedTags.length} 个标签更新统计`);
+
+      res.json({
+        success: true,
+        message: `文件标签设置成功: ${tag.name}`,
+        data: {
+          fileId: fileId,
+          fileName: file.originalName,
+          tag: tag,
+          notifiedTags: notifiedTags.length
         }
-      } catch (error) {
-        console.error(`设置标签 ${tagId} 失败:`, error);
-      }
+      });
+    } catch (error) {
+      console.error(`设置标签 ${tagId} 失败:`, error);
+      res.status(500).json({
+        success: false,
+        message: '设置文件标签失败',
+        error: error.message
+      });
     }
-
-    // 更新内存中的文件标签信息
-    file.tags = validTags;
-
-    // 🔔 立即通知所有相关标签更新统计
-    const notifiedTags = notifyTagStatsUpdate(fileId);
-
-    console.log(`✅ 文件 ${file.originalName} 标签已更新: ${validTags.length} 个标签，通知 ${notifiedTags.length} 个标签更新统计`);
-
-    res.json({
-      success: true,
-      message: `文件标签设置成功，共 ${validTags.length} 个标签`,
-      data: {
-        fileId: fileId,
-        fileName: file.originalName,
-        tags: validTags,
-        notifiedTags: notifiedTags.length
-      }
-    });
 
   } catch (error) {
     console.error('批量设置文件标签失败:', error);
@@ -1176,7 +1204,9 @@ router.get('/files', requireAuth, async (req, res) => {
     const enrichedFiles = paginatedFiles.map(file => ({
       ...file,
       formattedSize: formatFileSize(file.fileSize),
-      relativeTime: getRelativeTime(file.uploadTimestamp || new Date(file.createdAt).getTime()),      learningReady: file.status === 'completed' && !!file.content && !!file.aiAnalysis,
+      relativeTime: getRelativeTime(file.uploadTimestamp || new Date(file.createdAt).getTime()),
+      processedTime: file.processedAt ? getRelativeTime(new Date(file.processedAt).getTime()) : null,
+      learningReady: file.status === 'completed' && !!file.content && !!file.aiAnalysis,
       tagCount: file.tags ? file.tags.length : 0
     }));
     
@@ -1233,6 +1263,7 @@ router.get('/files/:id', requireAuth, async (req, res) => {
       tags: fileTags,
       formattedSize: formatFileSize(file.fileSize),
       relativeTime: getRelativeTime(file.uploadTimestamp || new Date(file.createdAt).getTime()),
+      processedTime: file.processedAt ? getRelativeTime(new Date(file.processedAt).getTime()) : null,
       learningReady: file.status === 'completed' && !!file.content && !!file.aiAnalysis
     };
     
@@ -1661,7 +1692,7 @@ router.delete('/safe-delete/:fileId', requireAdmin, (req, res) => {
 router.get('/list', requireAuth, async (req, res) => {
   try {
     const userId = req.user.id;
-    const isAdmin = req.user.role === 'admin';
+    const isAdmin = req.user.role === 'admin' || req.user.role === 'sub_admin'; // 🔧 修复：包含sub_admin
     let files = database.files.getAllFiles();
     
     if (!isAdmin) {

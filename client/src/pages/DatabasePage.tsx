@@ -31,13 +31,14 @@ interface FileItem {
   uploadTime: string;
   uploadTimestamp?: number;
   relativeTime?: string;
+  processedTime?: string;
   size: string;
+  formattedSize: string;
   fileType: string;
   hasAIResults: boolean;
   aiSummary?: string;
   stages: number;
   keyPoints: number;
-  difficulty: string;
   estimatedTime: string;
   error?: string;
   tags: TagItem[]; // 🏷️ 新增：文件标签
@@ -170,7 +171,7 @@ const DatabasePage = () => {
   // 🏷️ 新增：文件标签操作相关状态
   const [fileTagModalVisible, setFileTagModalVisible] = useState(false);
   const [editingFileId, setEditingFileId] = useState<string | null>(null);
-  const [selectedTags, setSelectedTags] = useState<number[]>([]);
+  const [selectedTags, setSelectedTags] = useState<number | null>(null); // 🔧 改为单标签模式
   const [filterTag, setFilterTag] = useState<number | null>(null);
     // 🤖 新增：AI分析相关状态
   const [aiAnalysisLoading, setAiAnalysisLoading] = useState(false);
@@ -392,23 +393,24 @@ const DatabasePage = () => {
     setTagModalVisible(true);
   };
 
-  // 🏷️ 新增：打开文件标签编辑模态框
+  // 🏷️ 修改：打开文件标签编辑模态框 - 单标签模式
   const openFileTagModal = (fileId: string) => {
     const file = files.find(f => f.id === fileId);
     if (file) {
       setEditingFileId(fileId);
-      setSelectedTags(file.tags.map(tag => tag.id));
+      // 🔧 单标签模式：只取第一个标签的ID，如果没有标签则为null
+      setSelectedTags(file.tags.length > 0 ? file.tags[0].id : null);
       setFileTagModalVisible(true);
     }
   };
 
-  // 🏷️ 新增：保存文件标签
+  // 🏷️ 修改：保存文件标签 - 单标签模式
   const handleSaveFileTags = async () => {
     if (!editingFileId) return;
     
     try {
       const response = await axios.put(`/api/upload/files/${editingFileId}/tags`, {
-        tagIds: selectedTags
+        tagId: selectedTags // 🔧 改为单个标签ID
       });
       
       if (response.data.success) {
@@ -417,7 +419,7 @@ const DatabasePage = () => {
         await fetchTags(); // 🏷️ 修复：刷新标签列表以更新计数
         setFileTagModalVisible(false);
         setEditingFileId(null);
-        setSelectedTags([]);
+        setSelectedTags(null); // 🔧 重置为null
       }
     } catch (error: any) {
       console.error('更新文件标签失败:', error);
@@ -649,7 +651,6 @@ const DatabasePage = () => {
         <Space direction="vertical" size={0}>
           <Text type="secondary">段落: {record.stages}</Text>
           <Text type="secondary">要點: {record.keyPoints}</Text>
-          <Text type="secondary">難度: {record.difficulty}</Text>
         </Space>
       )
     },
@@ -658,7 +659,7 @@ const DatabasePage = () => {
       key: 'fileInfo',
       render: (record: FileItem) => (
         <Space direction="vertical" size={0}>
-          <Text type="secondary">{record.size}</Text>
+          <Text type="secondary">{record.formattedSize}</Text>
           <Text type="secondary">{record.fileType}</Text>
           {formatTimeDisplay(record.uploadTime, record.uploadTimestamp, record.relativeTime)}
         </Space>
@@ -687,14 +688,14 @@ const DatabasePage = () => {
             </Button>
           </Space>          
           <Space>
-            {/* 🔧 修复：所有文件都可以重新分析，不仅仅是失败的文件 */}
+            {/* 🔧 修复：所有文件都可以重新分析，processing状态也可以重试 */}
             <Button 
               size="small" 
               icon={<ReloadOutlined />}
               onClick={() => reprocessFile(record.id)}
-              disabled={record.status === 'processing'}
+              disabled={false} // 允许所有状态的文件重新分析
             >
-              {record.status === 'failed' ? '重試' : '重新分析'}
+              {record.status === 'failed' ? '重試' : record.status === 'processing' ? '重試' : '重新分析'}
             </Button>
             <Popconfirm
               title="確定要刪除這個檔案嗎？"
@@ -989,14 +990,14 @@ const DatabasePage = () => {
               <Descriptions.Item label="狀態">
                 <FileStatusTag status={selectedFile.status} error={selectedFile.error} />
               </Descriptions.Item>
-              <Descriptions.Item label="檔案大小">{selectedFile.size}</Descriptions.Item>
+              <Descriptions.Item label="檔案大小">{selectedFile.formattedSize}</Descriptions.Item>
               <Descriptions.Item label="上傳時間">
                 {formatTimeDisplay(selectedFile.uploadTime, selectedFile.uploadTimestamp, selectedFile.relativeTime)}
               </Descriptions.Item>
               <Descriptions.Item label="處理時間">
                 {selectedFile.processedTime ? 
-                  formatTimeDisplay(selectedFile.processedTime) : 
-                  '未完成'
+                  selectedFile.processedTime : 
+                  (selectedFile.status === 'completed' ? '處理完成' : '未完成')
                 }
               </Descriptions.Item>
               <Descriptions.Item label="檔案類型">{selectedFile.fileType}</Descriptions.Item>
@@ -1092,14 +1093,14 @@ const DatabasePage = () => {
             <ColorPicker showText />
           </Form.Item>
         </Form>
-      </Modal>      {/* 🏷️ 新增：文件标签编辑模态框 */}
+      </Modal>      {/* 🏷️ 修改：文件标签编辑模态框 - 单标签模式 */}
       <Modal
         title="編輯文件標籤"
         open={fileTagModalVisible}
         onCancel={() => {
           setFileTagModalVisible(false);
           setEditingFileId(null);
-          setSelectedTags([]);
+          setSelectedTags(null); // 🔧 重置为null
         }}
         onOk={handleSaveFileTags}
         okText="保存"
@@ -1109,15 +1110,15 @@ const DatabasePage = () => {
         centered={isMobile}
       >
         <div style={{ marginBottom: 16 }}>
-          <Text strong>選擇標籤：</Text>
+          <Text strong>選擇標籤 (每個文件只能設置一個標籤)：</Text>
         </div>
         <Select
-          mode="multiple"
           style={{ width: '100%' }}
           placeholder="選擇文件標籤"
           value={selectedTags}
           onChange={setSelectedTags}
           optionLabelProp="label"
+          allowClear
         >
           {tags.map(tag => (
             <Option 
@@ -1140,10 +1141,10 @@ const DatabasePage = () => {
             </Option>
           ))}
         </Select>
-        {selectedTags.length > 0 && (
+        {selectedTags && (
           <div style={{ marginTop: 12 }}>
             <Text type="secondary" style={{ fontSize: 12 }}>
-              已選擇 {selectedTags.length} 個標籤
+              已選擇標籤: {tags.find(tag => tag.id === selectedTags)?.name}
             </Text>
           </div>
         )}

@@ -1,0 +1,32 @@
+{
+  "_disabled": "nodemon configuration temporarily disabled",
+  "_watch": [
+    "*.js",
+    "routes/**/*.js",
+    "middleware/**/*.js",
+    "models/**/*.js",
+    "utils/**/*.js",
+    "database/database.js",
+    "database/migrate_*.js"
+  ],
+  "_ignore": [
+    "node_modules/**",
+    "uploads/**",
+    "data/**",
+    "database/knowledge_platform.db*",
+    "database/knowledge_platform.db-shm",
+    "database/knowledge_platform.db-wal",
+    "*.log",
+    "*.tmp",
+    "temp/**",
+    "logs/**",
+    "data/vectors/**",
+    "data/chunks/**"
+  ],
+  "_ext": "js,json",
+  "_env": {
+    "NODE_ENV": "development"
+  },
+  "_delay": "1000",
+  "_verbose": true
+}
