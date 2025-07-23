@@ -274,9 +274,16 @@ const tagOperations = {
               shouldClean = true;
               reason = '数据库文件记录不存在';
             } else {
-              // 检查物理文件
+              // 检查物理文件 - 🔧 简化路径处理
               const filePath = memoryFile.uploadPath || dbFile.uploadPath;
-              if (!fs.existsSync(filePath)) {
+              const path = require('path');
+              
+              // 🔧 如果是相对路径，转换为绝对路径进行检查
+              const absolutePath = path.isAbsolute(filePath) 
+                ? filePath 
+                : path.resolve(__dirname, '..', filePath);
+              
+              if (!fs.existsSync(absolutePath)) {
                 shouldClean = true;
                 reason = '物理文件不存在';
               }

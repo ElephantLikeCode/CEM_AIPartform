@@ -17,6 +17,19 @@ const generateUniqueId = () => {
   return `file_${timestamp}_${randomStr}`;
 };
 
+// 🔧 简化：路径处理函数
+const getRelativeUploadPath = (absolutePath) => {
+  // 将绝对路径转换为相对于server目录的路径
+  const serverDir = path.resolve(__dirname, '..');
+  return path.relative(serverDir, absolutePath);
+};
+
+const getAbsoluteUploadPath = (relativePath) => {
+  // 将相对路径转换为绝对路径
+  const serverDir = path.resolve(__dirname, '..');
+  return path.resolve(serverDir, relativePath);
+};
+
 // 🔧 新增：生成相对时间显示
 const getRelativeTime = (timestamp) => {
   const now = Date.now();
@@ -165,7 +178,7 @@ const initializeFileDatabase = async () => {
         }
         
         // 检查物理文件是否存在
-        const fileExists = await fs.pathExists(dbFile.uploadPath);
+        const fileExists = await fs.pathExists(getAbsoluteUploadPath(dbFile.uploadPath));
         
         if (fileExists) {
           // 为文件加载标签信息
@@ -287,7 +300,7 @@ const initializeFileDatabase = async () => {
             const restoredFile = {
               id: newFileId,
               originalName: originalName,
-              uploadPath: orphanedFile.filePath,
+              uploadPath: getRelativeUploadPath(orphanedFile.filePath), // 🔧 存储相对路径
               fileSize: orphanedFile.size,
               fileType: fileExt,
               status: 'uploaded', // 需要重新分析
@@ -484,8 +497,8 @@ router.post('/files', requireAuth, upload.single('file'), async (req, res) => {
       
       // 删除旧的物理文件
       try {
-        if (await fs.pathExists(duplicateFile.uploadPath)) {
-          await fs.remove(duplicateFile.uploadPath);
+        if (await fs.pathExists(getAbsoluteUploadPath(duplicateFile.uploadPath))) {
+          await fs.remove(getAbsoluteUploadPath(duplicateFile.uploadPath));
           console.log('🗑️ 旧物理文件已删除');
         }
       } catch (error) {
@@ -507,11 +520,11 @@ router.post('/files', requireAuth, upload.single('file'), async (req, res) => {
       }
     }
 
-    // 创建文件记录 - 🔧 使用实际文件名作为显示名称
+    // 创建文件记录 - 🔧 直接存储相对路径
     const newFile = {
       id: generateUniqueId(),
       originalName: normalizedFileName, // 用户看到的名称
-      uploadPath: req.file.path, // 实际存储路径
+      uploadPath: getRelativeUploadPath(req.file.path), // 🔧 存储相对路径
       fileSize: req.file.size,
       fileType: path.extname(rawFileName),
       status: 'uploaded',
@@ -617,14 +630,14 @@ async function processFileWithAI(fileData, selectedModel = 'local') {
     }
     
     // 验证物理文件是否存在
-    if (!await fs.pathExists(fileData.uploadPath)) {
+    if (!await fs.pathExists(getAbsoluteUploadPath(fileData.uploadPath))) {
       throw new Error(`物理文件不存在: ${fileData.uploadPath}`);
     }
     
     // 提取文件内容
     console.log(`📄 开始提取文件内容: ${fileData.fileType}`);
     const content = await aiService.extractFileContent(
-      fileData.uploadPath, 
+      getAbsoluteUploadPath(fileData.uploadPath), // 🔧 转换为绝对路径用于读取
       fileData.fileType.substring(1)
     );
     
@@ -737,7 +750,7 @@ router.post('/files/:id/reprocess', requireAuth, async (req, res) => {
     }
     
     // 验证物理文件是否存在
-    if (!await fs.pathExists(file.uploadPath)) {
+    if (!await fs.pathExists(getAbsoluteUploadPath(file.uploadPath))) {
       console.error(`❌ 物理文件不存在: ${file.uploadPath}`);
       return res.status(400).json({
         success: false,
