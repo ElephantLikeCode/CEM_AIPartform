@@ -31,7 +31,7 @@
     "ws": "^8.18.2"
   },
   "devDependencies": {
-    "_nodemon": "^3.1.10"
+    "nodemon": "^3.1.10"
   },
   "keywords": [
     "ai",
